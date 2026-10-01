@@ -17,7 +17,7 @@ pip3 install -q -r requirements.txt || pip3 install -q --break-system-packages -
 if [ ! -f "$IMAGE" ]; then
     mkdir -p original
     if command -v gh >/dev/null && gh auth status >/dev/null 2>&1; then
-        gh release download disk-image --pattern "*.ima" --dir original
+        gh release download disk-image --pattern "*.ima" --output "$IMAGE"
     elif [ -n "${GITHUB_TOKEN:-}" ]; then
         repo=$(git remote get-url origin | sed -E 's#.*github.com[:/]##; s#\.git$##')
         id=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
