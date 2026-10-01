@@ -32,6 +32,16 @@ typedef struct CpuBus {
     void (*hle)(void *ctx, uint8_t service);
 } CpuBus;
 
+/* Optional undo log of RAM writes (filled by cpu_write8 while set). */
+typedef struct CpuWriteLog {
+    uint32_t *addr;
+    uint8_t *old;
+    uint32_t count, cap;
+    bool overflow;
+} CpuWriteLog;
+
+typedef struct Cpu8086 Cpu8086;
+
 typedef struct Cpu8086 {
     uint16_t regs[8];
     uint16_t sregs[4];
@@ -48,6 +58,16 @@ typedef struct Cpu8086 {
     CpuBus bus;
 
     uint8_t *trace; /* optional CPU_MEM_SIZE flag map for code/data mapping (T_* flags) */
+
+    /* Pre-execution hook: when hook_map is set, CS == hook_seg and hook_map[IP] != 0,
+     * cpu_step calls pre_exec first. If it returns true it has handled the instruction
+     * (and added its own cycles); cpu_step returns the cycles it used. */
+    const uint8_t *hook_map; /* 64K entries, indexed by IP */
+    uint16_t hook_seg;
+    bool (*pre_exec)(void *ctx, Cpu8086 *cpu);
+    void *hook_ctx;
+
+    CpuWriteLog *write_log; /* optional */
 } Cpu8086;
 
 /* Trace flags, one byte per linear address. */

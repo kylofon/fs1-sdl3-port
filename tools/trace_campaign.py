@@ -112,15 +112,20 @@ def session_reboot():
     return "reboot", ["--keys", "120:A,180:B,400:Left Ctrl*60,410:Left Alt*50,420:Delete*2,700:C,760:B"], 1200
 
 
+def sessions():
+    """All campaign sessions as (name, extra_args, frames); also used by verify_campaign.py."""
+    out = [session_demo(), session_flight_keys(), session_slew(), session_war(),
+           session_editor_values(), session_reboot()]
+    out += [session_display(c) for c in "ABC"]
+    out += [session_user_mode(m) for m in range(1, 6)]
+    return out
+
+
 def main():
     os.makedirs(os.path.dirname(TRACE), exist_ok=True)
     if "--fresh" in sys.argv and os.path.exists(TRACE):
         os.remove(TRACE)
-    sessions = [session_demo(), session_flight_keys(), session_slew(), session_war(),
-                session_editor_values(), session_reboot()]
-    sessions += [session_display(c) for c in "ABC"]
-    sessions += [session_user_mode(m) for m in range(1, 6)]
-    for name, args, frames in sessions:
+    for name, args, frames in sessions():
         cmd = [EXE, "--frames", str(frames), "--trace", TRACE] + args
         r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=1800)
         notes = [l for l in (r.stdout + r.stderr).splitlines() if "unknown" in l or "unhandled" in l]

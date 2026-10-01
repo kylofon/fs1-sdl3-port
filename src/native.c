@@ -1,0 +1,370 @@
+#include "native.h"
+
+#include <SDL3/SDL.h>
+#include <stddef.h>
+
+/* ---- native routines ------------------------------------------------------------ */
+
+/* 0050:45FD sin_quadrant: BX = 0..4000h -> AX, from the word table at DS:3381 with
+ * linear interpolation. Clobbers BX, DX, SI, DI like the original. Pass-through test
+ * native for the framework (3.0); flags are not guaranteed. */
+static void n_sin_quadrant(Pc *pc)
+{
+    Cpu8086 *c = &pc->cpu;
+    uint16_t ds = c->sregs[S_DS];
+    uint16_t x = c->regs[R_BX];
+    uint16_t bx = (uint16_t)(((uint16_t)(x << 1) >> 8) << 1);
+    uint16_t si = mem_read16(pc, ds, (uint16_t)(bx + 0x3381));
+    uint16_t di = (uint16_t)(mem_read16(pc, ds, (uint16_t)(bx + 0x3383)) - si);
+    int32_t p = (int32_t)(int16_t)(x & 0x7F) * (int16_t)di; /* IMUL DI -> DX:AX */
+    uint16_t ax = (uint16_t)p, dx = (uint16_t)((uint32_t)p >> 16);
+    dx = (uint16_t)(dx << 1 | ax >> 15); /* SHL AX,1 / RCL DX,1 */
+    ax = (uint16_t)(ax << 1);
+    ax = (uint16_t)((dx & 0xFF) << 8 | ax >> 8);
+    c->regs[R_AX] = (uint16_t)(ax + si);
+    c->regs[R_BX] = bx;
+    c->regs[R_DX] = dx;
+    c->regs[R_SI] = si;
+    c->regs[R_DI] = di;
+    native_ret(pc);
+}
+
+static NativeEntry entries[] = {
+    { .name = "test_passthrough", .seg = GAME_CS, .off = 0x45FD, .fn = n_sin_quadrant, .enabled = false,
+      .cycles = 253 },
+};
+#define ENTRY_COUNT ((int)SDL_arraysize(entries))
+
+/* ---- dispatch ------------------------------------------------------------------- */
+
+static Pc *g_pc;
+static uint8_t hook_map[0x10000]; /* entry index + 1 per offset in GAME_CS */
+static bool verifying;            /* inside a --verify run: everything executes as original */
+
+static void rebuild_map(void)
+{
+    bool any = false;
+    SDL_memset(hook_map, 0, sizeof hook_map);
+    for (int i = 0; i < ENTRY_COUNT; i++) {
+        if (entries[i].enabled && entries[i].seg == GAME_CS) {
+            hook_map[entries[i].off] = (uint8_t)(i + 1);
+            any = true;
+        }
+    }
+    if (g_pc)
+        g_pc->cpu.hook_map = any ? hook_map : NULL;
+}
+
+/* ---- differential verification ---------------------------------------------------
+ * The original routine runs first with an undo log of every RAM write (cpu_write8), then
+ * the writes are undone and the native runs with a second log. Only the addresses in the
+ * two logs are compared, then the original's result is put back. Device state (PIC, PIT,
+ * keyboard, CGA, speaker) and cycles end as the original left them. Memory written behind
+ * cpu_write8 (BIOS HLE services, e.g. disk reads) is not tracked. */
+
+#define VERIFY_STEP_CAP 5000000L
+#define VERIFY_LOG_CAP (4u << 20)
+#define VERIFY_MAX_REPORTS 10
+
+static CpuWriteLog log_orig, log_native;
+static uint8_t *mark;        /* CPU_MEM_SIZE: 1 = written by the original, 2 = seen in native log */
+static uint32_t *orig_addr;  /* unique addresses written by the original */
+static uint8_t *orig_post;   /* and their values after the original */
+static uint32_t orig_count;
+
+/* Pc device state: everything after mem/disk except the speaker event array. */
+#define DEV_A_START offsetof(Pc, pic_irr)
+#define DEV_A_END offsetof(Pc, speaker)
+#define DEV_B_START offsetof(Pc, speaker_count)
+typedef struct DevState {
+    uint8_t a[DEV_A_END - DEV_A_START];
+    uint8_t b[sizeof(Pc) - DEV_B_START];
+} DevState;
+static DevState dev_pre, dev_orig;
+static SpeakerEvent speaker_orig[PC_MAX_SPEAKER_EVENTS];
+
+static void dev_save(const Pc *pc, DevState *d)
+{
+    SDL_memcpy(d->a, (const uint8_t *)pc + DEV_A_START, sizeof d->a);
+    SDL_memcpy(d->b, (const uint8_t *)pc + DEV_B_START, sizeof d->b);
+}
+
+static void dev_load(Pc *pc, const DevState *d)
+{
+    SDL_memcpy((uint8_t *)pc + DEV_A_START, d->a, sizeof d->a);
+    SDL_memcpy((uint8_t *)pc + DEV_B_START, d->b, sizeof d->b);
+}
+
+static bool log_alloc(CpuWriteLog *l)
+{
+    l->addr = SDL_malloc(VERIFY_LOG_CAP * sizeof *l->addr);
+    l->old = SDL_malloc(VERIFY_LOG_CAP);
+    l->cap = VERIFY_LOG_CAP;
+    return l->addr && l->old;
+}
+
+static bool verify_alloc(void)
+{
+    if (mark)
+        return true;
+    mark = SDL_calloc(1, CPU_MEM_SIZE);
+    orig_addr = SDL_malloc(VERIFY_LOG_CAP * sizeof *orig_addr);
+    orig_post = SDL_malloc(VERIFY_LOG_CAP);
+    return mark && orig_addr && orig_post && log_alloc(&log_orig) && log_alloc(&log_native);
+}
+
+static void log_undo(Pc *pc, const CpuWriteLog *l)
+{
+    for (uint32_t i = l->count; i-- > 0;)
+        pc->mem[l->addr[i]] = l->old[i];
+}
+
+static bool ignored(const NativeEntry *e, uint32_t a)
+{
+    for (int i = 0; i < e->ignore_count; i++)
+        if (a >= e->ignore[i].lo && a < e->ignore[i].hi)
+            return true;
+    return false;
+}
+
+/* Single-steps the original until it returns. No interrupts are delivered. */
+static bool run_original(Pc *pc, const NativeEntry *e)
+{
+    Cpu8086 *c = &pc->cpu;
+    uint16_t sp0 = c->regs[R_SP], ss = c->sregs[S_SS];
+    uint32_t sa = cpu_linear(ss, sp0);
+    uint16_t ret_ip = (uint16_t)(pc->mem[sa] | pc->mem[(sa + 1) & CPU_MEM_MASK] << 8);
+    uint16_t ret_cs = c->sregs[S_CS];
+    if (e->far) {
+        uint32_t sb = cpu_linear(ss, (uint16_t)(sp0 + 2));
+        ret_cs = (uint16_t)(pc->mem[sb] | pc->mem[(sb + 1) & CPU_MEM_MASK] << 8);
+    }
+    for (long n = 0; n < VERIFY_STEP_CAP; n++) {
+        cpu_step(c);
+        uint16_t d = (uint16_t)(c->regs[R_SP] - sp0);
+        if (c->ip == ret_ip && c->sregs[S_CS] == ret_cs && d >= 2 && d < 0x8000)
+            return true;
+    }
+    return false;
+}
+
+static void verify_call(Pc *pc, NativeEntry *e)
+{
+    Cpu8086 *c = &pc->cpu;
+    e->calls++;
+    if (!verify_alloc()) {
+        SDL_Log("verify: out of memory");
+        e->verify = false;
+        e->fn(pc);
+        c->cycles += e->cycles ? e->cycles : NATIVE_CALL_CYCLES;
+        return;
+    }
+
+    /* 1. snapshot */
+    Cpu8086 cpu_pre = *c;
+    dev_save(pc, &dev_pre);
+    int speaker_pre = pc->speaker_count;
+
+    /* 2. original, logged */
+    verifying = true;
+    log_orig.count = 0;
+    log_orig.overflow = false;
+    c->write_log = &log_orig;
+    bool returned = run_original(pc, e);
+    c->write_log = NULL;
+    verifying = false;
+    if (!returned || log_orig.overflow) {
+        e->cap_hits++;
+        e->mismatches++;
+        e->verify = false;
+        SDL_Log("verify %s: call %llu: %s; verification of this entry stopped", e->name,
+                (unsigned long long)e->calls,
+                !returned ? "step cap hit before return" : "write log overflow");
+        return; /* keep the original's (partial) progress */
+    }
+
+    /* 3. save the original's result, then undo its writes */
+    Cpu8086 cpu_orig = *c;
+    uint64_t used = cpu_orig.cycles - cpu_pre.cycles;
+    if (!e->orig_cycles_max || used < e->orig_cycles_min)
+        e->orig_cycles_min = used;
+    if (used > e->orig_cycles_max)
+        e->orig_cycles_max = used;
+    dev_save(pc, &dev_orig);
+    int speaker_new = pc->speaker_count - speaker_pre;
+    if (speaker_new > 0)
+        SDL_memcpy(speaker_orig, pc->speaker + speaker_pre, (size_t)speaker_new * sizeof(SpeakerEvent));
+    orig_count = 0;
+    for (uint32_t i = 0; i < log_orig.count; i++) {
+        uint32_t a = log_orig.addr[i];
+        if (!mark[a]) {
+            mark[a] = 1;
+            orig_addr[orig_count] = a;
+            orig_post[orig_count++] = pc->mem[a];
+        }
+    }
+    log_undo(pc, &log_orig);
+
+    /* 4. native from the same state */
+    *c = cpu_pre;
+    dev_load(pc, &dev_pre);
+    log_native.count = 0;
+    log_native.overflow = false;
+    c->write_log = &log_native;
+    e->fn(pc);
+    c->write_log = NULL;
+
+    /* 5. compare */
+    char what[160] = "";
+    static const char *rn[8] = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
+    static const char *sn[4] = { "ES", "CS", "SS", "DS" };
+    for (int r = 0; r < 8 && !what[0]; r++)
+        if (c->regs[r] != cpu_orig.regs[r])
+            SDL_snprintf(what, sizeof what, "%s original %04X native %04X", rn[r], cpu_orig.regs[r], c->regs[r]);
+    for (int r = 0; r < 4 && !what[0]; r++)
+        if (c->sregs[r] != cpu_orig.sregs[r])
+            SDL_snprintf(what, sizeof what, "%s original %04X native %04X", sn[r], cpu_orig.sregs[r], c->sregs[r]);
+    if (!what[0] && c->ip != cpu_orig.ip)
+        SDL_snprintf(what, sizeof what, "IP original %04X native %04X", cpu_orig.ip, c->ip);
+    if (!what[0] && ((c->flags ^ cpu_orig.flags) & e->flag_mask))
+        SDL_snprintf(what, sizeof what, "flags original %04X native %04X (mask %04X)", cpu_orig.flags, c->flags,
+                     e->flag_mask);
+    if (log_native.overflow && !what[0])
+        SDL_snprintf(what, sizeof what, "native write log overflow");
+    for (uint32_t i = 0; i < orig_count && !what[0]; i++) {
+        uint32_t a = orig_addr[i];
+        if (pc->mem[a] != orig_post[i] && !ignored(e, a))
+            SDL_snprintf(what, sizeof what, "memory %05X original %02X native %02X", a, orig_post[i], pc->mem[a]);
+    }
+    for (uint32_t i = 0; i < log_native.count; i++) {
+        uint32_t a = log_native.addr[i];
+        if (mark[a])
+            continue; /* written by the original (checked above) or already seen */
+        mark[a] = 2;
+        if (!what[0] && pc->mem[a] != log_native.old[i] && !ignored(e, a))
+            SDL_snprintf(what, sizeof what, "memory %05X original %02X native %02X", a, log_native.old[i],
+                         pc->mem[a]);
+    }
+    if (what[0]) {
+        e->mismatches++;
+        if (e->mismatches <= VERIFY_MAX_REPORTS)
+            SDL_Log("verify %s: call %llu at %04X:%04X: %s", e->name, (unsigned long long)e->calls, e->seg, e->off,
+                    what);
+    }
+
+    /* 6. keep the original's result */
+    for (uint32_t i = 0; i < log_native.count; i++)
+        mark[log_native.addr[i]] = 0;
+    log_undo(pc, &log_native);
+    for (uint32_t i = 0; i < orig_count; i++) {
+        pc->mem[orig_addr[i]] = orig_post[i];
+        mark[orig_addr[i]] = 0;
+    }
+    *c = cpu_orig;
+    dev_load(pc, &dev_orig);
+    if (speaker_new > 0)
+        SDL_memcpy(pc->speaker + speaker_pre, speaker_orig, (size_t)speaker_new * sizeof(SpeakerEvent));
+}
+
+static bool pre_exec(void *ctx, Cpu8086 *c)
+{
+    Pc *pc = ctx;
+    if (verifying)
+        return false;
+    NativeEntry *e = &entries[hook_map[c->ip] - 1];
+    if (e->verify) {
+        verify_call(pc, e);
+    } else {
+        e->calls++;
+        e->fn(pc);
+        c->cycles += e->cycles ? e->cycles : NATIVE_CALL_CYCLES;
+    }
+    return true;
+}
+
+/* ---- setup and reporting -------------------------------------------------------- */
+
+void native_init(Pc *pc)
+{
+    g_pc = pc;
+    pc->cpu.hook_seg = GAME_CS;
+    pc->cpu.pre_exec = pre_exec;
+    pc->cpu.hook_ctx = pc;
+    rebuild_map();
+}
+
+static bool for_name(const char *name, bool (*fn)(NativeEntry *, bool), bool arg)
+{
+    bool all = SDL_strcmp(name, "all") == 0, found = false;
+    for (int i = 0; i < ENTRY_COUNT; i++) {
+        if (all || SDL_strcmp(entries[i].name, name) == 0) {
+            fn(&entries[i], arg);
+            found = true;
+        }
+    }
+    rebuild_map();
+    return found;
+}
+
+static bool set_enabled(NativeEntry *e, bool on)
+{
+    e->enabled = on;
+    return true;
+}
+
+static bool set_verify(NativeEntry *e, bool on)
+{
+    e->verify = on;
+    return true;
+}
+
+bool native_set_enabled(const char *name, bool enabled)
+{
+    return for_name(name, set_enabled, enabled);
+}
+
+bool native_set_verify(const char *name)
+{
+    return for_name(name, set_verify, true);
+}
+
+void native_list(void)
+{
+    SDL_Log("%-24s %-9s %-8s %s", "name", "address", "default", "flags");
+    for (int i = 0; i < ENTRY_COUNT; i++)
+        SDL_Log("%-24s %04X:%04X %-8s %04X", entries[i].name, entries[i].seg, entries[i].off,
+                entries[i].enabled ? "on" : "off", entries[i].flag_mask);
+}
+
+void native_verify_summary(void)
+{
+    for (int i = 0; i < ENTRY_COUNT; i++) {
+        const NativeEntry *e = &entries[i];
+        if (!e->verify && !e->cap_hits)
+            continue;
+        if (!e->enabled)
+            SDL_Log("verify-summary %s calls 0 mismatches 0 (disabled)", e->name);
+        else
+            SDL_Log("verify-summary %s calls %llu mismatches %llu original-cycles %llu..%llu", e->name,
+                    (unsigned long long)e->calls, (unsigned long long)e->mismatches,
+                    (unsigned long long)e->orig_cycles_min, (unsigned long long)e->orig_cycles_max);
+    }
+}
+
+void native_shutdown(void)
+{
+    SDL_free(mark);
+    SDL_free(orig_addr);
+    SDL_free(orig_post);
+    SDL_free(log_orig.addr);
+    SDL_free(log_orig.old);
+    SDL_free(log_native.addr);
+    SDL_free(log_native.old);
+    mark = NULL;
+    orig_addr = NULL;
+    orig_post = NULL;
+    log_orig = log_native = (CpuWriteLog){ 0 };
+    if (g_pc)
+        g_pc->cpu.hook_map = NULL;
+    g_pc = NULL;
+}

@@ -47,8 +47,18 @@ void cpu_write8(Cpu8086 *c, uint32_t a, uint8_t v)
         if ((c->trace[a] & T_RUN) && c->mem[a] != v)
             c->trace[a] |= T_SMC;
     }
-    if (a < c->rom_start)
+    if (a < c->rom_start) {
+        CpuWriteLog *log = c->write_log;
+        if (log) {
+            if (log->count < log->cap) {
+                log->addr[log->count] = a;
+                log->old[log->count++] = c->mem[a];
+            } else {
+                log->overflow = true;
+            }
+        }
         c->mem[a] = v;
+    }
 }
 
 void cpu_write16(Cpu8086 *c, uint32_t a, uint16_t v)
@@ -576,6 +586,8 @@ int cpu_step(Cpu8086 *c)
         c->cycles += 4;
         return 4;
     }
+    if (c->hook_map && c->sregs[S_CS] == c->hook_seg && c->hook_map[c->ip] && c->pre_exec(c->hook_ctx, c))
+        return (int)(c->cycles - start);
 
     for (;;) {
         op = fetch8(c);

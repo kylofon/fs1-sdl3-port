@@ -559,6 +559,7 @@ static void pc_power_on(Pc *pc)
     bool composite = pc->composite;
     uint64_t cycles = pc->cpu.cycles;
     uint8_t *trace = pc->cpu.trace;
+    Cpu8086 hooks = pc->cpu; /* native replacement hooks survive a reboot */
     uint8_t font[256][8];
     SDL_memcpy(font, pc->font, sizeof font);
 
@@ -611,6 +612,11 @@ static void pc_power_on(Pc *pc)
     cga_set_mode(pc, 3);
     c->cycles = cycles;
     c->trace = trace;
+    c->hook_map = hooks.hook_map;
+    c->hook_seg = hooks.hook_seg;
+    c->pre_exec = hooks.pre_exec;
+    c->hook_ctx = hooks.hook_ctx;
+    c->write_log = hooks.write_log;
     pc->speaker_slice_start = cycles;
     pc->kbd_next_cycle = cycles;
 }

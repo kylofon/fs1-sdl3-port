@@ -17,12 +17,19 @@
  *   --rgb               start with the RGB (mono) display instead of composite
  *   --trace FILE        write a 1 MB execution/data trace map (cpu8086.h T_* flags) on quit;
  *                       an existing FILE is merged (OR) so several sessions accumulate
+ *   --native-off NAME   run the original code instead of native NAME ("all" = every native)
+ *   --native-on NAME    enable native NAME (or "all"), e.g. the default-off test_passthrough
+ *   --list-natives      print the native replacement registry and exit
+ *   --verify NAME       differential check of native NAME (or "all") against the original on
+ *                       every call; prints "verify-summary NAME calls N mismatches M" on quit
+ *   Native options apply in command-line order.
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
 #include "disk.h"
+#include "native.h"
 #include "pc.h"
 
 #define WINDOW_W 960
@@ -363,6 +370,20 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
                 i++;
         } else if (SDL_strcmp(argv[i], "--type") == 0 && i + 1 < argc)
             app->type_text = argv[++i];
+        else if ((SDL_strcmp(argv[i], "--native-off") == 0 || SDL_strcmp(argv[i], "--native-on") == 0 ||
+                  SDL_strcmp(argv[i], "--verify") == 0) && i + 1 < argc) {
+            const char *name = argv[i + 1];
+            bool ok = SDL_strcmp(argv[i], "--verify") == 0 ? native_set_verify(name)
+                                                           : native_set_enabled(name, argv[i][10] == 'n');
+            if (!ok) {
+                SDL_Log("Unknown native: %s (see --list-natives)", name);
+                return SDL_APP_FAILURE;
+            }
+            i++;
+        } else if (SDL_strcmp(argv[i], "--list-natives") == 0) {
+            native_list();
+            return SDL_APP_SUCCESS;
+        }
         else
             disk_path = argv[i];
     }
@@ -396,6 +417,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         return SDL_APP_FAILURE;
     if (app->trace_path)
         app->pc->cpu.trace = SDL_calloc(1, CPU_MEM_SIZE);
+    native_init(app->pc);
     pc_boot(app->pc);
     if (app->start_rgb)
         app->pc->composite = false;
@@ -543,6 +565,8 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
                 app->pc->cpu.ip,
                 (unsigned long long)app->pc->cpu.cycles, app->pc->cga_mode, app->pc->cga_color,
                 app->pc->crtc[1], app->pc->crtc[6], app->pc->crtc[9]);
+        native_verify_summary();
+        native_shutdown();
         pc_free(app->pc);
         SDL_free(app->pc);
     }

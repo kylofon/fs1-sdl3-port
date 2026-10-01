@@ -57,6 +57,10 @@ Dev options: `--frames N` quits after N frames of 1/60 s, `--screenshot FILE.bmp
 `--shot-at N` also saves `FILE_N.bmp` at frame N, `--keys "300:F2,400:Keypad 8*30"` scripts key presses,
 `--type TEXT` types TEXT one key per second, `--rgb` starts in RGB mode, `--dump-on-exit` dumps memory,
 and `--trace FILE` accumulates an execution/data trace map (see [docs/PROGRAM_MAP.md](docs/PROGRAM_MAP.md)).
+Native replacements of original routines (phase 3): `--list-natives` prints them, `--native-off NAME|all`
+runs the original code instead, `--native-on NAME|all` enables a default-off one, and `--verify NAME|all`
+runs both the original and the native on every call and reports differences
+(`python tools/verify_campaign.py` does this over all campaign sessions; see [docs/PHASE3_PLAN.md](docs/PHASE3_PLAN.md)).
 
 ## You need the original disk
 
