@@ -28,7 +28,8 @@ The game is not included. Put your PC booter disk image at:
 
     original/Microsoft Flight Simulator v1.05 (198x)(Microsoft Corporation).ima
 
-or pass a path to it as the first argument to `fs1`. A 160K raw sector image (40×8×512) is expected.
+or next to `fs1.exe`, or pass a path to it as the first argument. The program finds it whether you start it
+from the project root, from `build/`, or by double-clicking. A 160K raw sector image (40×8×512) is expected.
 An Apple II `.dsk` of subLOGIC's Flight Simulator is also recognised, but is only a reference.
 
 ## Building (Windows, MSYS2 MinGW64)

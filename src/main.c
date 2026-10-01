@@ -21,7 +21,7 @@
 #define WINDOW_W 960
 #define WINDOW_H 720
 #define AUDIO_RATE 44100
-#define DEFAULT_DISK "original/Microsoft Flight Simulator v1.05 (198x)(Microsoft Corporation).ima"
+#define DEFAULT_DISK_NAME "Microsoft Flight Simulator v1.05 (198x)(Microsoft Corporation).ima"
 
 typedef struct App {
     SDL_Window *window;
@@ -185,6 +185,39 @@ static void save_screenshot(App *app, const char *path)
     SDL_DestroySurface(s);
 }
 
+static bool file_exists(const char *path)
+{
+    SDL_PathInfo info;
+    return SDL_GetPathInfo(path, &info) && info.type == SDL_PATHTYPE_FILE;
+}
+
+/* Looks for the default disk image relative to the working directory and to the executable,
+ * so the game starts both from the project root and from inside build/. */
+static char *find_default_disk(void)
+{
+    static const char *dirs[] = { "", "original/", "../original/", "../../original/" };
+    const char *bases[2] = { "", SDL_GetBasePath() };
+    for (int b = 0; b < 2; b++) {
+        if (!bases[b])
+            continue;
+        for (int d = 0; d < (int)SDL_arraysize(dirs); d++) {
+            char *path = NULL;
+            SDL_asprintf(&path, "%s%s%s", bases[b], dirs[d], DEFAULT_DISK_NAME);
+            if (path && file_exists(path))
+                return path;
+            SDL_free(path);
+        }
+    }
+    return NULL;
+}
+
+static SDL_AppResult fail(const char *message)
+{
+    SDL_Log("%s", message);
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Flight Simulator 1", message, NULL);
+    return SDL_APP_FAILURE;
+}
+
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 {
     SDL_SetAppMetadata("Flight Simulator 1", "0.2", "fs1-sdl3");
@@ -195,7 +228,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     *appstate = app;
     app->speed = 1;
 
-    const char *disk_path = DEFAULT_DISK;
+    const char *disk_path = NULL;
     for (int i = 1; i < argc; i++) {
         if (SDL_strcmp(argv[i], "--frames") == 0 && i + 1 < argc)
             app->max_frames = SDL_atoi(argv[++i]);
@@ -207,12 +240,29 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
             disk_path = argv[i];
     }
 
-    if (!disk_load(&app->disk, disk_path))
-        return SDL_APP_FAILURE;
-    if (app->disk.format != DISK_PC_160K) {
-        SDL_Log("'%s' is not a PC disk image; only the PC version runs", disk_path);
-        return SDL_APP_FAILURE;
+    char *found = NULL;
+    if (!disk_path) {
+        found = find_default_disk();
+        if (!found)
+            return fail("Disk image not found.\n\nPut \"" DEFAULT_DISK_NAME "\" in the original/ folder "
+                        "or next to fs1.exe, or pass its path as the first argument.");
+        disk_path = found;
     }
+
+    bool loaded = disk_load(&app->disk, disk_path);
+    char *message = NULL;
+    if (!loaded)
+        SDL_asprintf(&message, "Cannot load disk image:\n%s", disk_path);
+    else if (app->disk.format != DISK_PC_160K)
+        SDL_asprintf(&message, "Not a PC disk image (only the PC version runs):\n%s", disk_path);
+    if (message) {
+        SDL_AppResult r = fail(message);
+        SDL_free(message);
+        SDL_free(found);
+        return r;
+    }
+    SDL_Log("Booting %s", disk_path);
+    SDL_free(found);
 
     app->pc = SDL_malloc(sizeof(Pc));
     if (!app->pc || !pc_init(app->pc, &app->disk))
@@ -246,7 +296,6 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         SDL_Log("No audio: %s", SDL_GetError());
 
     app->last_ticks = SDL_GetTicksNS();
-    SDL_Log("Booting %s", disk_path);
     return SDL_APP_CONTINUE;
 }
 
