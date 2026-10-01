@@ -35,9 +35,15 @@ verified by scripted key presses against the running game, except where marked *
 | Esc | "MFS Edit Mode" editor (positions, slew, Europe 1917 war mode, …) |
 | Ctrl+Alt+Del | Reboot to the display menu |
 | Tab | Shifts the picture horizontally on a real monitor (no visible effect here) |
-| Space, X, W, A | War mode: guns, bombs and war controls (*untested*) |
-| Alt | Slew mode: level the aircraft (*untested*) |
-| D, KP9, KP3, 0 | *Untested/unclear*; no visible effect from a standing start |
+| KP9 / PgUp, KP3 / PgDn | Slew mode: bank / turn (no effect in normal flight) |
+| Alt | Slew mode: snap the aircraft to a fixed attitude |
+| Space | War mode: fire guns |
+| X | War mode: drop a bomb |
+| W | War mode: cycle the status line between SCORE / AMMO / BOMBS |
+| A, D, 0 | No visible effect found yet |
+
+In the Esc editor, Enter moves the `-->` cursor to the next field. Type a value and press Enter to set it,
+then press Esc to return to flight. Slew is the 4th field and Europe 1917 (war mode) is the 7th.
 
 Port keys (F1–F10 belong to the game):
 
