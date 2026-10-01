@@ -526,9 +526,8 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
         uint8_t *trace = app->pc->cpu.trace;
         size_t old_size = 0;
         uint8_t *old = SDL_LoadFile(app->trace_path, &old_size);
-        if (old && old_size == CPU_MEM_SIZE)
-            for (size_t i = 0; i < CPU_MEM_SIZE; i++)
-                trace[i] |= old[i];
+        for (size_t i = 0; i < CPU_MEM_SIZE; i++)
+            trace[i] = (uint8_t)((trace[i] & ~T_RUN) | (old && old_size == CPU_MEM_SIZE ? old[i] : 0));
         SDL_free(old);
         if (SDL_SaveFile(app->trace_path, trace, CPU_MEM_SIZE))
             SDL_Log("Trace written to %s", app->trace_path);

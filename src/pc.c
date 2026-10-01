@@ -531,6 +531,9 @@ static void hle(void *ctx, uint8_t n)
         break;
     case 0x18: case 0x19:
         SDL_Log("Reboot");
+        if (pc->cpu.trace)
+            for (uint32_t i = 0; i < CPU_MEM_SIZE; i++)
+                pc->cpu.trace[i] &= (uint8_t)~T_RUN;
         pc_power_on(pc);
         pc_boot(pc);
         break;

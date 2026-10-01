@@ -44,7 +44,7 @@ void cpu_write8(Cpu8086 *c, uint32_t a, uint8_t v)
     a &= CPU_MEM_MASK;
     if (c->trace) {
         c->trace[a] |= T_WRITE;
-        if ((c->trace[a] & T_EXEC) && c->mem[a] != v)
+        if ((c->trace[a] & T_RUN) && c->mem[a] != v)
             c->trace[a] |= T_SMC;
     }
     if (a < c->rom_start)
@@ -571,7 +571,7 @@ int cpu_step(Cpu8086 *c)
 
     c->int_inhibit = false;
     if (c->trace)
-        c->trace[cpu_linear(c->sregs[S_CS], c->ip)] |= T_EXEC;
+        c->trace[cpu_linear(c->sregs[S_CS], c->ip)] |= T_EXEC | T_RUN;
     if (c->halted) {
         c->cycles += 4;
         return 4;

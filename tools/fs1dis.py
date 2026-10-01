@@ -167,9 +167,12 @@ class Disassembler:
     def var_name(self, off):
         if off in self.var_syms:
             return self.var_syms[off][0]
-        for base in range(off - 1, off - 4, -1):
-            if base in self.var_syms and self.var_syms[base][1] in ("word", "dword", "table"):
-                return f"{self.var_syms[base][0]}+{off - base}"
+        sizes = {"word": 2, "dword": 4, "table": 64, "text": 16}
+        for base in range(off - 1, off - 64, -1):
+            if base in self.var_syms:
+                if off - base < sizes.get(self.var_syms[base][1], 1):
+                    return f"{self.var_syms[base][0]}+{off - base}"
+                return None
         return None
 
     def render(self, insn):

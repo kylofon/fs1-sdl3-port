@@ -78,6 +78,14 @@ A minimal PC/XT core built for this one game:
   8. Scenery paging from tracks 15–26
 - Write format docs (scenery database, game state layout) in `docs/`. These become the C structs.
 
+**Status:** done. See [PROGRAM_MAP.md](PROGRAM_MAP.md) and [symbols.txt](symbols.txt).
+- About 78% of the code segment executed in traces.
+- About 230 routines and variables are named.
+- The main loop, timer, flight model, 3D pipeline, scenery interpreter, panel, editor and war mode are
+  all located.
+- Ghidra wasn't needed. The project's own tools ([trace_campaign.py](../tools/trace_campaign.py) and
+  [fs1dis.py](../tools/fs1dis.py)) produce the listing and cross-references in `extracted/`.
+
 ### Phase 3: Replace routines with native C, one at a time
 
 - Bind C implementations to CS:IP traps, starting with leaf routines (line draw, multiply, sin/cos,

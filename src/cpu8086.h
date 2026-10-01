@@ -58,7 +58,8 @@ enum {
     T_INT = 0x08,   /* interrupt handler entry */
     T_READ = 0x10,  /* read as data */
     T_WRITE = 0x20, /* written as data */
-    T_SMC = 0x40    /* modified after being executed (self-modifying code) */
+    T_SMC = 0x40,   /* modified after being executed in the same session (self-modifying code) */
+    T_RUN = 0x80    /* executed in the current session; cleared before the map is saved */
 };
 
 void cpu_reset(Cpu8086 *cpu);
