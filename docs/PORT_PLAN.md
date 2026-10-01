@@ -51,6 +51,17 @@ A minimal PC/XT core built for this one game:
 **Exit criteria:** it boots to the display menu, then the demo and regular flight work in all
 4 scenery areas, plus the war mode. Copy protection is identified and handled.
 
+**Status:**
+- Done: boots through the real boot sector, display menu, regular flight. Composite artifact colour
+  works, and so does the RGB/mono rendering.
+- Findings:
+  - The game uses CGA 640×200 in every mode: `3D8`=`1A` for the colour choices, `1E` for B/W.
+    Colour comes purely from NTSC artifacts (sky `0111` = light blue, ground `1011` = green).
+  - The decoder's hue reference is 340°.
+  - So far nothing hits the key-track protection.
+- Still to verify: demo mode, scenery switching (runtime `int 13h` reads), war mode, sound, and
+  long-running timing.
+
 ### Phase 2: Map the program
 
 - Load `extracted/boot_mem.bin` into Ghidra (x86 real mode). Seed it with the known entry points

@@ -3,8 +3,24 @@
 A port of *Microsoft Flight Simulator* 1.0x (IBM PC, 1982, by Bruce Artwick / subLOGIC) to modern
 platforms using SDL3.
 
-**Status:** Phase 0. The repo scaffold, disk analysis and loader decoding are done.
+**Status:** Phase 1. The original program boots and flies inside an embedded minimal PC
+(8088 + CGA + PIT/PIC + keyboard + speaker, high-level BIOS, no IBM ROM).
 See [docs/PORT_PLAN.md](docs/PORT_PLAN.md).
+
+## Playing
+
+At the menu, pick **A** (colour composite) for the authentic colours, then **B** (regular flight).
+
+| Key | Action |
+|---|---|
+| Numeric keypad / arrows / Home, End, PgUp, PgDn, Ins, Del | The original's keypad flight controls |
+| Letters, digits, F1–F10 | As in the original manual |
+| F10 | Toggle the monitor between composite (artifact colour) and RGB |
+| F11 | Emulation speed x1 / x2 / x4 / x8 (sound only plays at x1) |
+| F12 | Dump memory to `extracted/mem_dump.bin` |
+
+Dev options: `--frames N` quits after N frames of 1/60 s, `--screenshot FILE.bmp` saves the last frame,
+and `--type TEXT` types TEXT one key per second.
 
 ## You need the original disk
 

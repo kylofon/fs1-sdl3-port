@@ -9,6 +9,8 @@ find_package(SDL3 REQUIRED CONFIG)
 add_executable(fs1
     src/main.c
     src/disk.c
+    src/cpu8086.c
+    src/pc.c
 )
 target_link_libraries(fs1 PRIVATE SDL3::SDL3)
 
