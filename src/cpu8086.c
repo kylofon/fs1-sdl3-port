@@ -21,8 +21,16 @@ static void init_tables(void)
 
 /* ---- memory ---------------------------------------------------------- */
 
+static void trace_target(Cpu8086 *c, uint8_t flag)
+{
+    if (c->trace)
+        c->trace[cpu_linear(c->sregs[S_CS], c->ip)] |= flag;
+}
+
 uint8_t cpu_read8(Cpu8086 *c, uint32_t a)
 {
+    if (c->trace)
+        c->trace[a & CPU_MEM_MASK] |= T_READ;
     return c->mem[a & CPU_MEM_MASK];
 }
 
@@ -34,6 +42,11 @@ uint16_t cpu_read16(Cpu8086 *c, uint32_t a)
 void cpu_write8(Cpu8086 *c, uint32_t a, uint8_t v)
 {
     a &= CPU_MEM_MASK;
+    if (c->trace) {
+        c->trace[a] |= T_WRITE;
+        if ((c->trace[a] & T_EXEC) && c->mem[a] != v)
+            c->trace[a] |= T_SMC;
+    }
     if (a < c->rom_start)
         c->mem[a] = v;
 }
@@ -59,7 +72,7 @@ uint16_t cpu_pop(Cpu8086 *c)
 
 static uint8_t fetch8(Cpu8086 *c)
 {
-    return cpu_read8(c, cpu_linear(c->sregs[S_CS], c->ip++));
+    return c->mem[cpu_linear(c->sregs[S_CS], c->ip++)];
 }
 
 static uint16_t fetch16(Cpu8086 *c)
@@ -271,6 +284,7 @@ void cpu_interrupt(Cpu8086 *c, uint8_t vector)
     cpu_push(c, c->ip);
     c->ip = cpu_read16(c, (uint32_t)vector * 4);
     c->sregs[S_CS] = cpu_read16(c, (uint32_t)vector * 4 + 2);
+    trace_target(c, T_INT);
     c->halted = false;
     c->cycles += 51;
 }
@@ -556,6 +570,8 @@ int cpu_step(Cpu8086 *c)
     uint8_t op;
 
     c->int_inhibit = false;
+    if (c->trace)
+        c->trace[cpu_linear(c->sregs[S_CS], c->ip)] |= T_EXEC;
     if (c->halted) {
         c->cycles += 4;
         return 4;
@@ -718,6 +734,7 @@ int cpu_step(Cpu8086 *c)
         int8_t rel = (int8_t)fetch8(c);
         if (condition(c, op & 0x0F)) {
             c->ip = (uint16_t)(c->ip + rel);
+            trace_target(c, T_JUMP);
             c->cycles += 14;
         } else {
             c->cycles += 2;
@@ -814,6 +831,7 @@ int cpu_step(Cpu8086 *c)
         cpu_push(c, c->sregs[S_CS]);
         cpu_push(c, c->ip);
         c->ip = ip;
+        trace_target(c, T_CALL);
         c->sregs[S_CS] = cs;
         c->cycles += 36;
         break;
@@ -976,6 +994,7 @@ int cpu_step(Cpu8086 *c)
             jump = jump && (c->flags & F_ZF);
         if (jump) {
             c->ip = (uint16_t)(c->ip + rel);
+            trace_target(c, T_JUMP);
             c->cycles += 15;
         } else {
             c->cycles += 3;
@@ -986,6 +1005,7 @@ int cpu_step(Cpu8086 *c)
         int8_t rel = (int8_t)fetch8(c);
         if (c->regs[R_CX] == 0) {
             c->ip = (uint16_t)(c->ip + rel);
+            trace_target(c, T_JUMP);
             c->cycles += 16;
         } else {
             c->cycles += 4;
@@ -1014,12 +1034,14 @@ int cpu_step(Cpu8086 *c)
         uint16_t rel = fetch16(c);
         cpu_push(c, c->ip);
         c->ip = (uint16_t)(c->ip + rel);
+        trace_target(c, T_CALL);
         c->cycles += 19;
         break;
     }
     case 0xE9: {
         uint16_t rel = fetch16(c);
         c->ip = (uint16_t)(c->ip + rel);
+        trace_target(c, T_JUMP);
         c->cycles += 15;
         break;
     }
@@ -1027,6 +1049,7 @@ int cpu_step(Cpu8086 *c)
         uint16_t ip = fetch16(c);
         uint16_t cs = fetch16(c);
         c->ip = ip;
+        trace_target(c, T_JUMP);
         c->sregs[S_CS] = cs;
         c->cycles += 15;
         break;
@@ -1034,6 +1057,7 @@ int cpu_step(Cpu8086 *c)
     case 0xEB: {
         int8_t rel = (int8_t)fetch8(c);
         c->ip = (uint16_t)(c->ip + rel);
+        trace_target(c, T_JUMP);
         c->cycles += 15;
         break;
     }
@@ -1073,6 +1097,7 @@ int cpu_step(Cpu8086 *c)
             uint16_t target = (uint16_t)get_e(c, &m, 1);
             cpu_push(c, c->ip);
             c->ip = target;
+            trace_target(c, T_CALL);
             c->cycles += 21;
             break;
         }
@@ -1082,17 +1107,20 @@ int cpu_step(Cpu8086 *c)
             cpu_push(c, c->sregs[S_CS]);
             cpu_push(c, c->ip);
             c->ip = ip;
+            trace_target(c, T_CALL);
             c->sregs[S_CS] = cs;
             c->cycles += 37;
             break;
         }
         case 4:
             c->ip = (uint16_t)get_e(c, &m, 1);
+            trace_target(c, T_JUMP);
             c->cycles += 11;
             break;
         case 5:
             c->ip = cpu_read16(c, m.addr);
             c->sregs[S_CS] = cpu_read16(c, m.addr + 2);
+            trace_target(c, T_JUMP);
             c->cycles += 24;
             break;
         default:

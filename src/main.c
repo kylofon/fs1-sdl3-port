@@ -15,6 +15,8 @@
  *   --type TEXT         type TEXT, one key per second, starting after 2 seconds
  *   --dump-on-exit      write extracted/mem_dump.bin on quit
  *   --rgb               start with the RGB (mono) display instead of composite
+ *   --trace FILE        write a 1 MB execution/data trace map (cpu8086.h T_* flags) on quit;
+ *                       an existing FILE is merged (OR) so several sessions accumulate
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -51,6 +53,7 @@ typedef struct App {
     int shot_count;
     bool dump_on_exit;
     bool start_rgb;
+    const char *trace_path;
 } App;
 
 static uint8_t xt_scancode(SDL_Scancode sc)
@@ -345,6 +348,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
             app->max_frames = SDL_atoi(argv[++i]);
         else if (SDL_strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc)
             app->screenshot = argv[++i];
+        else if (SDL_strcmp(argv[i], "--trace") == 0 && i + 1 < argc)
+            app->trace_path = argv[++i];
         else if (SDL_strcmp(argv[i], "--rgb") == 0)
             app->start_rgb = true;
         else if (SDL_strcmp(argv[i], "--dump-on-exit") == 0)
@@ -389,6 +394,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     app->pc = SDL_malloc(sizeof(Pc));
     if (!app->pc || !pc_init(app->pc, &app->disk))
         return SDL_APP_FAILURE;
+    if (app->trace_path)
+        app->pc->cpu.trace = SDL_calloc(1, CPU_MEM_SIZE);
     pc_boot(app->pc);
     if (app->start_rgb)
         app->pc->composite = false;
@@ -515,6 +522,19 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     App *app = appstate;
     if (!app)
         return;
+    if (app->trace_path && app->pc && app->pc->cpu.trace) {
+        uint8_t *trace = app->pc->cpu.trace;
+        size_t old_size = 0;
+        uint8_t *old = SDL_LoadFile(app->trace_path, &old_size);
+        if (old && old_size == CPU_MEM_SIZE)
+            for (size_t i = 0; i < CPU_MEM_SIZE; i++)
+                trace[i] |= old[i];
+        SDL_free(old);
+        if (SDL_SaveFile(app->trace_path, trace, CPU_MEM_SIZE))
+            SDL_Log("Trace written to %s", app->trace_path);
+        SDL_free(trace);
+        app->pc->cpu.trace = NULL;
+    }
     if (app->dump_on_exit && app->pc)
         dump_memory(app);
     if (app->screenshot && app->pc)

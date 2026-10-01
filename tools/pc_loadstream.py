@@ -41,6 +41,7 @@ def main(path, dump=None):
     img = open(path, "rb").read()
     s = Stream(img)
     mem = bytearray(0x100000)
+    mem[0x500:0x700] = img[0:512]  # the boot sector relocates itself to 0050:0000
     di = 0x0700
     while True:
         at = s.where()

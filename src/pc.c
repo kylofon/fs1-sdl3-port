@@ -555,6 +555,7 @@ static void pc_power_on(Pc *pc)
     Disk *disk = pc->disk;
     bool composite = pc->composite;
     uint64_t cycles = pc->cpu.cycles;
+    uint8_t *trace = pc->cpu.trace;
     uint8_t font[256][8];
     SDL_memcpy(font, pc->font, sizeof font);
 
@@ -606,6 +607,7 @@ static void pc_power_on(Pc *pc)
 
     cga_set_mode(pc, 3);
     c->cycles = cycles;
+    c->trace = trace;
     pc->speaker_slice_start = cycles;
     pc->kbd_next_cycle = cycles;
 }

@@ -55,7 +55,8 @@ Port keys (F1–F10 belong to the game):
 
 Dev options: `--frames N` quits after N frames of 1/60 s, `--screenshot FILE.bmp` saves the last frame,
 `--shot-at N` also saves `FILE_N.bmp` at frame N, `--keys "300:F2,400:Keypad 8*30"` scripts key presses,
-`--type TEXT` types TEXT one key per second, `--rgb` starts in RGB mode, and `--dump-on-exit` dumps memory.
+`--type TEXT` types TEXT one key per second, `--rgb` starts in RGB mode, `--dump-on-exit` dumps memory,
+and `--trace FILE` accumulates an execution/data trace map (see [docs/PROGRAM_MAP.md](docs/PROGRAM_MAP.md)).
 
 ## You need the original disk
 

@@ -1,0 +1,115 @@
+# Symbols for MS Flight Simulator 1.05 (used by tools/fs1dis.py)
+#
+#   code SEG:OFF name                ; comment
+#   var  SEG:OFF name [byte|word|dword|table|text] ; comment
+#
+# Code lives in segment 0050 (linear 00500-0685F). The game's data segment is DS=0618
+# (stored by the loader at 0000:0120); it overlaps the tail of the code block.
+# Fixed-point control values are signed 16-bit, 0x7FFF = full deflection.
+# Evidence tags: [key] = changed by scripted key presses, [code] = read from disassembly.
+
+# ---- boot / init -------------------------------------------------------------------------
+code 0050:0000 boot_start            ; boot sector relocated from 0000:7C00
+code 0050:0104 boot_read_track       ; int 13h read of track [03B3] into B800:0000 (also used for scenery)
+code 0050:017C boot_stream_byte      ; next byte of the load stream
+code 0050:01A0 boot_stream_word
+code 0050:5600 cga_program_regs      ; writes (port-3D0, value) pairs from table [BX] (default 399C)
+code 0050:5C9F start                 ; entry after the loader finishes
+code 0050:5DA6 hook_int9             ; installs keyboard handler 0970, old vector saved at 03FB
+code 0050:5DC3 hook_int8             ; installs timer handler 07A0, old vector saved at 040E
+
+# ---- interrupt handlers ----------------------------------------------------------------
+code 0050:07A0 int8_timer            ; IRQ0 handler
+code 0050:0970 int9_keyboard         ; IRQ1 handler: port 60h, Ctrl+Alt+Del check, dispatch
+code 0050:09AB key_dispatch          ; scancode -> handler via table key_handlers
+
+# ---- key handlers (from table key_handlers, verified by key tests) -----------------------
+code 0050:0A04 key_esc_editor        ; [key] Esc: enter edit mode
+code 0050:0A0A key_mag_off           ; [key] 1..5: magneto switch
+code 0050:0A0D key_set_magnetos
+code 0050:0A21 key_mag_left
+code 0050:0A26 key_mag_right
+code 0050:0A2B key_mag_both
+code 0050:0A30 key_mag_start
+code 0050:0A35 key_0
+code 0050:0A3A key_minus             ; [key] decrease selected item
+code 0050:0B53 key_equals            ; [key] increase selected item
+code 0050:0C79 key_tab               ; [code] cycles CRTC R2 (horizontal sync position)
+code 0050:0C8A key_w                 ; [key] war mode: cycle status line
+code 0050:0C90 key_t                 ; [key] select transponder digit
+code 0050:0CD5 key_p_pause           ; [key]
+code 0050:0CDA key_a
+code 0050:0CE3 key_d                 ; [code] directional gyro = compass heading?
+code 0050:0CF6 key_g_gear            ; [key]
+code 0050:0D14 key_h_carb_heat       ; [key]
+code 0050:0D1A key_l_lights          ; [key]
+code 0050:0D20 key_x_bomb            ; [key] war mode
+code 0050:0D4B key_c_com             ; [key]
+code 0050:0D6E key_v_obi             ; [key]
+code 0050:0D74 key_n_nav             ; [key]
+code 0050:0D92 key_m_nop             ; [code] empty handler
+code 0050:0D93 key_period_brakes     ; [key]
+code 0050:0DA8 key_kpstar_reset      ; [key] calls the start-of-flight init routines
+code 0050:0DAF key_alt_slew_level    ; [key] slew mode only
+code 0050:0DC5 key_space_guns        ; [key] war mode
+code 0050:0DD3 key_flaps_up          ; [key] F1; F3/F5/F7/F9 enter at 0E15/0E1D/0E25/0E2D
+code 0050:0DD9 set_flaps
+code 0050:0E35 key_throttle_inc      ; [key] F4
+code 0050:0E45 key_throttle_full     ; [key] F2
+code 0050:0E7B key_throttle_inc_small ; [key] F6
+code 0050:0E89 key_throttle_dec      ; [key] F8
+code 0050:0E97 key_throttle_cut      ; [key] F10
+code 0050:0EA5 key_radar_on          ; [key] Num Lock
+code 0050:0EB0 key_radar_off         ; [key] Scroll Lock
+code 0050:0EC3 key_trim_down         ; [key] KP7
+code 0050:0EDC key_ignore            ; unbound keys; also tail of trim update
+code 0050:0EF4 key_kp9_slew
+code 0050:0F00 key_elevator_down     ; [key] KP8
+code 0050:0F4B key_aileron_left      ; [key] KP4
+code 0050:0F61 key_center            ; [key] KP5
+code 0050:0F90 key_aileron_right     ; [key] KP6
+code 0050:0FD4 key_rudder_right      ; [key] KP+
+code 0050:1008 key_trim_up           ; [key] KP1
+code 0050:1024 key_elevator_up       ; [key] KP2
+code 0050:1044 key_kp3_slew
+code 0050:1050 key_rudder_left       ; [key] KP0
+code 0050:1060 key_enter             ; passes keys to BIOS int 9 while in the editor
+code 0050:109B key_repeat_accel      ; [code] called with BL = key index by the keypad handlers
+code 0050:2111 draw_indicator        ; [code] BP = indicator descriptor, used after control changes
+
+# ---- variables in DS=0618 ----------------------------------------------------------------
+var 0618:03F5 editor_active byte     ; [code] set by Esc; keys are then routed to the editor
+var 0618:03FB old_int9 dword
+var 0618:0404 paused byte            ; [key] P toggles
+var 0618:0405 radar_view byte        ; [key] Num Lock = 1, Scroll Lock = 0
+var 0618:040E old_int8 dword
+var 0618:0573 aileron word           ; [key] KP4 -0x400, KP6 +0x400, KP5 = 0
+var 0618:0577 carb_heat byte         ; [key] H toggles
+var 0618:0578 elevator word          ; [key] KP8 -0x100, KP2 +0x100 (x8 when held)
+var 0618:057A elevator_trim word     ; [key] KP7 -0x400, KP1 +0x400
+var 0618:057C flaps word             ; [key] 0 / 2000 / 4000 / 6000 / 7FFF
+var 0618:057E gear_down byte         ; [key] G toggles (only when airborne)
+var 0618:057F editor_key byte        ; [code] translated key for the editor, bit 7 = new
+var 0618:0582 lights byte            ; [key] L toggles
+var 0618:0583 magnetos byte          ; [key] 0 off, 1 L, 2 R, 3 both, 4 start, 5 (key 0)
+var 0618:058A last_scancodes word    ; [code] previous/current make codes (Ctrl+Alt+Del)
+var 0618:058C rudder word            ; [key] KP0 -0x400, KP+ +0x400
+var 0618:058E selected_item byte     ; [key] for -/=: 1 clock?, 2 radar zoom, 4/5 COM, 6/7 NAV, 8-B transponder, C OBI
+var 0618:058F slew_rate_a word       ; [key] KP7/KP9 (slew)
+var 0618:0591 slew_rate_b word       ; [key] KP1/KP3 (slew)
+var 0618:0593 throttle_target word   ; [code] set with throttle keys
+var 0618:0597 throttle word          ; [key] F2 = 7FFF, F10 = 0, F4 +0800, F6 +0400, F8 -0800
+var 0618:05B1 key_handlers table     ; word table indexed by scancode*2 (1-53h)
+var 0618:0659 editor_key_table table ; scancode -> editor key code
+var 0618:06A4 obi_course word        ; [key] V then -/= (degrees)
+var 0618:07A6 com_freq text          ; [key] ASCII digits "XX.XX"
+var 0618:07B1 nav_freq text          ; [key] ASCII digits
+var 0618:07C6 transponder text       ; [key] ASCII digits
+var 0618:086F on_ground byte         ; [code] gates gear and brakes
+var 0618:08A8 ground_speed word      ; [code] reduced by brakes
+var 0618:1E5A war_status_line byte   ; [key] W cycles
+var 0618:1EE1 bombs_left byte        ; [code] ASCII digit, X decrements
+var 0618:204A auto_coordination byte ; [code] couples aileron and rudder
+var 0618:204B slew_mode byte         ; [code]
+var 0618:204E war_mode byte          ; [code] Europe 1917
+var 0618:399C cga_init_table table   ; (port-3D0, value) pairs, 0-terminated

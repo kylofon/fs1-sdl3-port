@@ -46,7 +46,20 @@ typedef struct Cpu8086 {
     bool int_inhibit; /* set by STI / MOV SS / POP SS: no IRQ before next instruction */
 
     CpuBus bus;
+
+    uint8_t *trace; /* optional CPU_MEM_SIZE flag map for code/data mapping (T_* flags) */
 } Cpu8086;
+
+/* Trace flags, one byte per linear address. */
+enum {
+    T_EXEC = 0x01,  /* an instruction started here */
+    T_CALL = 0x02,  /* target of a CALL */
+    T_JUMP = 0x04,  /* target of a taken jump */
+    T_INT = 0x08,   /* interrupt handler entry */
+    T_READ = 0x10,  /* read as data */
+    T_WRITE = 0x20, /* written as data */
+    T_SMC = 0x40    /* modified after being executed (self-modifying code) */
+};
 
 void cpu_reset(Cpu8086 *cpu);
 /* Executes one instruction (a whole REP string op counts as one). Returns cycles used. */
