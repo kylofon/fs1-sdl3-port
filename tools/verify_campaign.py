@@ -14,7 +14,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from trace_campaign import EXE, ROOT, sessions  # noqa: E402
+from trace_campaign import EXE, HEADLESS_ENV, ROOT, sessions  # noqa: E402
 
 SUMMARY = re.compile(r"verify-summary (\S+) calls (\d+) mismatches (\d+)")
 
@@ -25,7 +25,7 @@ def run(session, names, extra):
     for n in names:
         cmd += ["--native-on", n, "--verify", n]
     cmd += extra + args
-    r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=3600)
+    r = subprocess.run(cmd, cwd=ROOT, env=HEADLESS_ENV, capture_output=True, text=True, timeout=3600)
     out = r.stdout + r.stderr
     results = {m.group(1): (int(m.group(2)), int(m.group(3))) for m in SUMMARY.finditer(out)}
     reports = [l for l in out.splitlines() if l.startswith("verify ")]

@@ -83,6 +83,10 @@ Install the MSYS2 packages `mingw-w64-x86_64-gcc`, `mingw-w64-x86_64-cmake`, `mi
 
 On other platforms, any SDL3 install that CMake can find through `find_package(SDL3)` works.
 
+## Cloud sessions
+
+See [docs/CLOUD.md](docs/CLOUD.md) for building and verifying on a headless Linux machine.
+
 ## Layout
 
 - `src/`: the port (C11, SDL3)

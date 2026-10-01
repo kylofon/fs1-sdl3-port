@@ -13,7 +13,13 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXE = os.path.join(ROOT, "build", "fs1.exe")
+EXE = os.path.join(ROOT, "build", "fs1.exe" if os.name == "nt" else "fs1")
+# Scripted runs never need a visible window or sound; this also makes them work on
+# headless Linux machines (cloud sessions, CI). Set FS1_SHOW=1 to watch them.
+HEADLESS_ENV = dict(os.environ)
+if not os.environ.get("FS1_SHOW"):
+    HEADLESS_ENV.setdefault("SDL_VIDEODRIVER", "offscreen")
+    HEADLESS_ENV.setdefault("SDL_AUDIODRIVER", "dummy")
 TRACE = os.path.join(ROOT, "extracted", "trace.bin")
 
 
@@ -127,7 +133,7 @@ def main():
         os.remove(TRACE)
     for name, args, frames in sessions():
         cmd = [EXE, "--frames", str(frames), "--trace", TRACE] + args
-        r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=1800)
+        r = subprocess.run(cmd, cwd=ROOT, env=HEADLESS_ENV, capture_output=True, text=True, timeout=1800)
         notes = [l for l in (r.stdout + r.stderr).splitlines() if "unknown" in l or "unhandled" in l]
         print(f"{name:16s} {frames:6d} frames  exit {r.returncode}", *notes)
     data = open(TRACE, "rb").read()
