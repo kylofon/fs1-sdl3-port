@@ -107,9 +107,9 @@ code 0050:0625 crash_handler         ; [code] message by crash_code via table 04
 code 0050:045D draw_scenery          ; [code] runs the scenery program; also sets crash_code (terrain/building/water?)
 
 # ---- maths -------------------------------------------------------------------------------------------
-code 0050:45C0 sincos                ; [code] BX = angle -> AX = sin, CX = cos (Q15); clobbers BP SI DI DX
-code 0050:45FD sin_quadrant          ; [code] BX = 0..4000h -> AX; table sine_table + linear interpolation
-code 0050:1BEE div_q15               ; [code] DX:AX / CX signed, DX = quotient>>1, saturating
+code 0050:45C0 sincos                ; [code] BX = angle -> AX = sin, CX = cos (Q15); BP = angle (or -angle, 7FFFh for 8000h); BX DX SI DI from last sin_quadrant
+code 0050:45FD sin_quadrant          ; [code] BX = 0..4000h -> AX = cos(BX) (Q15) from sine_table + linear interpolation; misnamed: the table is a cosine
+code 0050:1BEE div_q15               ; [code] DX:AX / CX signed -> DX = (|n|/|d|)>>1 signed; saturates 7FFFh/8001h; CX=0 -> by sign of DX; faults (INT 0) for 80000000h
 code 0050:11A9 fmt_signed_dec        ; [code] AX -> sign at [BX] then decimal ASCII digits
 
 # ---- 3D view -----------------------------------------------------------------------------------------
@@ -260,7 +260,7 @@ var 0618:08BA cl_right word
 var 0618:092F asi_needle_desc table  ; [code]
 var 0618:09BD needle_quadrant_tbl table
 var 0618:19A3 panel_mask word        ; [code] per-instrument update bits
-var 0618:1D48 sky_ground_patterns table ; [code] 7777 / BBBB words
+var 0618:1D48 sky_pattern word       ; [code] 7777h by day
 var 0618:1D4F horizon_programs table ; [code] one per heading octant
 var 0618:1DC0 engine_rpm byte        ; [code]? drives the IRQ0 rate (engine pitch)
 var 0618:1E27 wind_dx word           ; [code]?
@@ -295,9 +295,172 @@ var 0618:30F7 view_angles table
 var 0618:30FD view_matrix table      ; [code] 3x3 words
 var 0618:3167 proj_params table      ; [code] x scale 4F, y scale CC, centre 50,35
 var 0618:3204 scenery_op_table table ; [code] 43h handlers
-var 0618:3381 sine_table table       ; [code] Q15 quarter wave
+var 0618:3381 sine_table table       ; [code] Q15 cosine quarter wave, 129 words T[0]=7FFFh..T[128]=0 + guard word; filled at run time
 var 0618:3800 clear_words word
 var 0618:3806 view_buf_seg word      ; [code] back buffer segment (0C0C)
 var 0618:380C row_offsets table      ; [code] scanline -> offset (bank interleave)
 var 0618:399C cga_init_table table   ; (port-3D0, value) pairs, 0-terminated
 var 0618:39D7 cga_mode_ctrl byte     ; [code] 1A colour (A, C), 1E B/W (B)
+
+
+# ---- from docs/subphases/3.2.md --------------------
+code 0050:1508 fmt_course_digits     ; [code] AL (2-degree units) -> DL hundreds, AL tens, AH units (ASCII)
+code 0050:3553 fmt_dec4_byte         ; [code] AH = 0, then fmt_dec4
+code 0050:3555 fmt_dec4              ; [code] AX 0..32767 -> CL CH AL AH = 4 ASCII digits
+var  0618:2012 editor_value          ; [code] 24-bit LE value being converted
+var  0618:202C editor_digits         ; [code] 6 ASCII digits, most significant first
+var  0618:2036 pow10_lo              ; [code] 100000..1 low bytes; mid at 203C, high at 2042
+
+# ---- from docs/subphases/3.3.md --------------------
+var 0618:3802 blit_words0 word      ; [code] words blitted from blit_off0 (bank 0)
+var 0618:3804 blit_words1 word      ; [code] words blitted from blit_off1 (bank 1)
+var 0618:3808 blit_off0 word        ; [code] start offset of the first blit block
+var 0618:380A blit_off1 word        ; [code] start offset of the second blit block (2000h bank)
+
+# ---- from docs/subphases/3.4.md --------------------
+code 0050:5060 draw_poly_edge        ; [code] draw_line while [31D0]: x clamped 1..158, midpoint pixel left out and stored as a fill seed
+code 0050:532C poly_seed_xmajor      ; [code] seed with the neighbour in the row above/below (also 5345)
+code 0050:5372 poly_seed_ymajor      ; [code] seed with the neighbour nibble left/right (also 53AC)
+code 0050:53C6 poly_count_up         ; [code] y-major going up: flip inside side, then poly_count
+code 0050:53D3 poly_count            ; [code] BP = pixels+1; > 3 -> stop at the midpoint first
+code 0050:44FB op_poly_begin         ; [code] opcode 2F: [31D0] = 1, clear edge list 3730
+code 0050:5468 op_poly_end           ; [code] opcode 2D: [31D0] = 0; day: fill spans
+code 0050:549B poly_fill             ; [code] pairs recorded edges per row, fills with fill_pattern
+var 0618:31D0 poly_mode byte         ; [code] 1 between ops 2F and 2D: draw_line records edges
+var 0618:30C4 line_list_ptr word     ; [code] draw_line_list record pointer
+var 0618:3730 poly_edges table       ; [code] edge list for ops 2F/2D
+
+# ---- from docs/subphases/3.6.md --------------------
+code 0050:4737 view_dir_ahead
+code 0050:474A view_dir_ahead_right
+code 0050:4755 view_dir_right
+code 0050:4770 view_dir_rear_right
+code 0050:478A view_dir_rear
+code 0050:4792 view_dir_rear_left
+code 0050:479A view_dir_left
+code 0050:47B5 view_dir_ahead_left
+code 0050:47C1 view_dir_down
+code 0050:47DD fetch_point_p1        ; [code] point at [BX+1] -> eye space 310F + outcode p1
+code 0050:47E3 fetch_point           ; [code] world_to_eye_delta + rotate_point, scenery_ip = after the point
+code 0050:47FA fetch_point_p2        ; [code] same into 311B/3127 + outcode p2
+code 0050:4A82 clip_isect_p1         ; [code] intersection helper for clip_p1_plane
+code 0050:4AAB clip_isect_p2         ; [code] intersection helper for clip_line_planes
+code 0050:4AF7 clip_p1_plane         ; [code] one Cohen-Sutherland step for point 1
+code 0050:3D26 project_dot_regs      ; [code] project_dot with BX, CX, BP = x, y, z
+code 0050:41D1 op_dot_cached         ; [code] opcode 35
+code 0050:4DC6 int0_saturate         ; [code] INT 0 handler: AX = +-7FFF by sign of DX^BX, IRET
+var 0618:3139 xform_in table         ; [code] 3 words, input of rotate_point
+var 0618:315B flat_y word            ; [code] y for ops 40/41 (always 0)
+var 0618:315D flat_flag byte         ; [code] next point has no y operand
+var 0618:315E outcode1 byte
+var 0618:315F outcode2 byte
+var 0618:3162 clip_steps byte
+var 0618:3380 no_normalise_queue byte ; [code] bit 0 -> rotate_point skips normalising
+
+# ---- from docs/subphases/3.7.md --------------------
+code 0050:3D8A op_move_flat          ; [code] opcode 40: move, y = [315B]
+code 0050:3DAF op_line_flat          ; [code] opcode 41: line, y = [315B]
+code 0050:3DDC op_close              ; [code] opcode 29: line back to the last move start
+code 0050:3E47 op_line2d             ; [code] opcode 06: screen-space line (unused)
+code 0050:3E69 op_clear_view         ; [code] opcode 08 (unused)
+code 0050:3E78 op_capture            ; [code] opcode 0D: capture_mode on/off, pointer [30C6] (unused)
+code 0050:3E98 op_proj_scale         ; [code] opcode 0E: proj_params scale/centre (unused)
+code 0050:3EAF op_cga_regs           ; [code] opcode 10: cga_program_regs (unused)
+code 0050:3EB6 op_nop                ; [code] opcode 11
+code 0050:3EBB op_colour             ; [code] opcode 12: draw_colour = solid nibble c
+code 0050:3ED8 op_colour_night       ; [code] opcode 2E: draw_colour = w if time_of_day & 4
+code 0050:3EEC op_colour_dusk        ; [code] opcode 0C: draw_colour = w if time_of_day & 2
+code 0050:3EF4 op_colour_dark_a      ; [code] opcode 1B: 5005h at dusk/night
+code 0050:3F07 op_colour_dark_b      ; [code] opcode 1C: 0002h at dusk/night
+code 0050:3F0C op_store              ; [code] opcode 25: word [v] = imm
+code 0050:3F1A op_if_in              ; [code] opcode 20: skip r unless lo <= [v] <= hi
+code 0050:3F3B op_if_in2             ; [code] opcode 21
+code 0050:3F67 op_if_in3             ; [code] opcode 22
+code 0050:3FA6 op_if_bits            ; [code] opcode 23: skip r unless [v] & mask
+code 0050:3FBE op_jump_if            ; [code] opcode 28: [a] ==/>/< [b] (cond 0/2/4) -> IP += r
+code 0050:3FF0 op_origin             ; [code] opcode 24: local frame origin + shift; sets eye_pos
+code 0050:405F scale_shift           ; [code] DX:AX >> 0/4/8/12/16 by [30DD] via table 316C
+code 0050:4140 op_cache_point        ; [code] opcode 31: transform point into cache slot
+code 0050:415C cache_slot_addr       ; [code] BP = 3288 + 8 * byte [BX+1]
+code 0050:4178 op_move_cached        ; [code] opcode 32
+code 0050:418E op_line_cached        ; [code] opcode 33
+code 0050:41CB op_skip1              ; [code] opcode 34 (unused)
+code 0050:4234 eye_delta_rescaled    ; [code] point at SI - eye_pos, rotated into ES:DI (ops 2A/2B)
+code 0050:43A1 op_dotted             ; [code] opcode 2A: n dots B -> A (unused)
+code 0050:43B4 interp_segment_setup  ; [code] ops 2A/2B: endpoints + 32-bit step / n
+code 0050:4428 interp_segment_step
+code 0050:44BF op_dashed             ; [code] opcode 2B: n/2 dashes B -> A
+code 0050:4517 op_call               ; [code] opcode 18: [31D1] = IP + 3, IP += r
+code 0050:4523 op_return             ; [code] opcode 19: IP = [31D1]
+code 0050:452A op_nav_station        ; [code] opcode 1D
+code 0050:4556 op_com_station        ; [code] opcode 1E
+code 0050:4592 op_copy               ; [code] opcode 1A: [dst] = [src]
+code 0050:45A2 op_demo_script        ; [code] opcode 17: [31E8] = data, IP += r
+code 0050:45B1 op_invalid            ; [code] jmp $ (hang); followed by the text "BADOP"
+code 0050:110C demo_step             ; [code] ~6 Hz in demo mode: next demo-script byte -> key_dispatch
+code 0050:147D nav_search_start      ; [code] [31D5] = 0, [31D3] = 1
+code 0050:1447 nav_tune              ; [code] nav_freq -> BCD [03FF], then nav_search_start
+code 0050:2FD0 update_time_of_day    ; [code] clock vs season table 1E2C -> time_of_day 1/2/4
+code 0050:4F7D atis_next_char        ; [code] ATIS text stream: 80h+k = fragment k, 00 ends
+code 0050:4FBF atis_start            ; [code] formats runway/temperature/time/wind fields
+code 0050:0742 field_elev_follow     ; [code] [0906] = field_elevation when slow
+code 0050:25D4 marker_lamps          ; [code] shifts out marker flags 1A17/1A1B/1A19
+var 0618:03F2 com_bcd word           ; [code] tuned COM, BCD (124.85 -> 2485h)
+var 0618:03FF nav_bcd word           ; [code] tuned NAV, BCD (109.15 -> 0915h)
+var 0618:0406 ground_service byte    ; [code] set by scenery: 1 refuel, 2 re-arm (war) when stopped
+var 0618:0412 time_of_day word       ; [code] 1 day, 2 dusk, 4 night
+var 0618:0416 overlay_fill word      ; [code] fill byte for view_overlay_marks, set by scenery?
+var 0618:041D blink_bits word        ; [code] rotated every frame; scenery tests it for flashing lights
+var 0618:0571 demo_ptr word          ; [code] current demo-script byte
+var 0618:0900 alt_display word       ; [code] altitude word + [0906], used for the band marker
+var 0618:0906 ground_elev word       ; [code] altimeter baseline, follows field_elevation
+var 0618:090A field_elevation word   ; [code] metres, stored by scenery per airport
+var 0618:0915 heading_offset word    ; [code] set per area (magnetic variation?)
+var 0618:0917 mag_variation word     ; [code] set per area, binary angle (LA 0AAA = 15 deg)
+var 0618:1A19 marker_a byte          ; [code] marker beacon flag set by scenery
+var 0618:1A1B marker_b byte          ; [code] marker beacon flag set by scenery
+var 0618:1A1D ils_param word         ; [code] set by scenery after an ILS station (glide slope?)
+var 0618:1A1F ils_course word        ; [code] localizer course, set by scenery
+var 0618:1D4A ground_pattern word    ; [code] BBBBh by day
+var 0618:1E24 utc_offset word        ; [code] hours, set per area (ATIS Zulu time)
+var 0618:1E53 bomb_score word        ; [code] set by war-area scenery, read by war_bomb_fall?
+var 0618:30C6 capture_ptr word       ; [code] next capture record
+var 0618:30DD scenery_scale byte     ; [code] op 24 shift selector 0/2/4/6/8
+var 0618:30DF scenery_origin table   ; [code] east, up, north dwords (16.16)
+var 0618:3159 colour_byte word       ; [code] op 12 colour in both nibbles
+var 0618:3163 move_pending byte      ; [code] next line starts at the pen
+var 0618:316C scale_shift_table table ; [code] op 24 shift handlers
+var 0618:3176 compare_table table    ; [code] op 28: je / jg / jl
+var 0618:31CE fill_pattern word      ; [code] polygon fill word (op 2D)
+var 0618:31D1 scenery_return word    ; [code] op 18/19 return address (one level)
+var 0618:31D3 nav_search byte        ; [code] request; copied to 31D4 per interpreter pass
+var 0618:31D5 nav_found byte         ; [code] station record at 31D6 valid
+var 0618:31D6 nav_station table      ; [code] east, north dwords
+var 0618:31DE com_search byte        ; [code] request; copied to 31DF per pass
+var 0618:31E0 com_station table      ; [code] 4 runways by wind quadrant, 4 temperatures by season
+var 0618:31E8 demo_script word       ; [code] start of the area's demo script (op 17)
+var 0618:31EA display_colours table  ; [code] sky/ground words per display type, from startup_menus
+var 0618:3288 point_cache table      ; [code] 8 bytes per slot: eye x, y, z, outcode
+var 0618:3626 atis_ptr word          ; [code] next ATIS byte
+var 0618:3628 atis_idle byte         ; [code] 0 while a message runs
+var 0618:362D atis_fragments table   ; [code] 14 fragment pointers
+
+# ---- from docs/subphases/3.10.md --------------------
+code 0050:1DE8 draw_needle2          ; [code] AL = angle, AH bit0 = force redraw, CX = descriptor; sprites DS:098F
+code 0050:1DDA needle_check_same     ; [code] cmp code,[bx+4]: equal -> pops and returns from draw_needle
+code 0050:1EE3 needle_redraw_second  ; [code] if [090F]: draw_needle2 of [090D] at its +9 angle
+code 0050:1F63 needle_erase          ; [code] restores the needle drawn at BX from the clean panel copy
+code 0050:20E0 alt_band_marker       ; [code] if [0914]: erase 13AC, blit_sprite record [13B8 + 2*([0900]/5F5)]
+code 0050:4DE0 blit_sprite           ; [code] ES=B800; blit_or with record DS:BX (+0 offset, +2 size, +4 words)
+var 0618:0904 needle2_force byte     ; [code] AH of draw_needle2
+var 0618:090D second_needle_desc word ; [code] descriptor redrawn after draw_needle (0943)
+var 0618:090F needle_redraw2 byte    ; [code] AH of draw_needle
+var 0618:0910 needle_row_step word   ; [code] row step from an even line (1FB0 up / 2000 down)
+var 0618:0912 needle_row_step2 word  ; [code] row step from an odd line (E000 up / E050 down)
+var 0618:0914 alt_band_on byte       ; [code] set by upd_altimeter around draw_needle
+var 0618:0961 needle_sprites table   ; [code] sprite pointers for draw_needle, by direction 0..3F
+var 0618:098F needle2_sprites table  ; [code] sprite pointers for draw_needle2
+var 0618:12B4 cga_mirror_tbl table   ; [code] bit-reversal of 2-bpp pixels (mirrored needles)
+var 0618:13B8 alt_band_sprites table ; [code] 5 blit_sprite records
+var 0618:1400 indicator_force byte   ; [code] forced-redraw counter for draw_indicator
+var 0000:0122 panel_copy_seg word    ; [code] segment of the clean panel copy (erase source)

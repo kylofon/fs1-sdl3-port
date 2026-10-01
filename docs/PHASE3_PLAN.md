@@ -20,6 +20,24 @@ the user clears the previous one.
   learned along the way.
 - **Testing.** The user tests the game after each subphase.
 
+## Status
+
+Subphases run concurrently, one agent each (see [subphases/README.md](subphases/README.md)). Every merge is
+checked on top of main with all natives enabled (`verify_campaign.py` must print OK).
+Symbols from the notes are merged with `python tools/merge_symbols.py`.
+
+| Subphase | State | PR | Notes |
+|---|---|---|---|
+| 3.0 | merged | – | framework |
+| 3.1 | merged | #6 | [3.1](subphases/3.1.md) |
+| 3.2 | merged | #5 | [3.2](subphases/3.2.md) |
+| 3.3 | merged | #3 | [3.3](subphases/3.3.md) |
+| 3.4 | merged | #4 | [3.4](subphases/3.4.md) |
+| 3.6 | merged | #2 | [3.6](subphases/3.6.md) |
+| 3.7 | merged | #1 | [3.7](subphases/3.7.md), [SCENERY_FORMAT](SCENERY_FORMAT.md) |
+| 3.10 | merged | #7 | [3.10](subphases/3.10.md) |
+| 3.5, 3.8, 3.9, 3.11, 3.12, 3.13, 3.14, 3.17 | in progress | | |
+
 ## Subphases
 
 | # | Subphase | Scope | Done when |
