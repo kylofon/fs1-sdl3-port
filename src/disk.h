@@ -5,17 +5,25 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define DISK_TRACKS      35
-#define DISK_SECTORS     16
-#define DISK_SECTOR_SIZE 256
-#define DISK_IMAGE_SIZE  (DISK_TRACKS * DISK_SECTORS * DISK_SECTOR_SIZE)
+typedef enum DiskFormat {
+    DISK_PC_160K,     /* IBM PC 5.25" SS/DD: 40 tracks x 8 sectors x 512 B (.ima/.img) */
+    DISK_APPLE2_140K, /* Apple II 5.25": 35 tracks x 16 sectors x 256 B, DOS 3.3 order (.dsk/.do) */
+} DiskFormat;
 
-/* 140K Apple II 5.25" image in DOS 3.3 logical sector order (.dsk / .do). */
 typedef struct Disk {
-    uint8_t data[DISK_IMAGE_SIZE];
+    DiskFormat format;
+    int tracks;
+    int sectors_per_track;
+    int sector_size;
+    size_t size;
+    uint8_t *data;
 } Disk;
 
+/* Loads a raw sector image; the format is detected from the file size. */
 bool disk_load(Disk *disk, const char *path);
+void disk_free(Disk *disk);
+
+/* Sector numbers are 0-based for both formats (BIOS int 13h sector N is index N-1). */
 const uint8_t *disk_sector(const Disk *disk, int track, int sector);
 
 #endif

@@ -1,4 +1,7 @@
-# Disk image analysis
+# Apple II disk analysis (secondary reference)
+
+> Superseded as the port base by the IBM PC version; see [ANALYSIS_PC.md](ANALYSIS_PC.md) and [PORT_PLAN.md](PORT_PLAN.md).
+> Note: this is subLOGIC's earlier Apple II *Flight Simulator*, a separate and simpler codebase than Microsoft Flight Simulator 1.0 for the PC.
 
 Image: `original/Flight_Simulator_1_1983_subLOGIC_cr_Midwest_Pirates_Guild.dsk`
 
