@@ -1,0 +1,22 @@
+# Build output
+/build/
+/out/
+
+# Copyrighted game media: user-supplied, never committed
+*.dsk
+*.do
+*.po
+*.nib
+*.woz
+/original/*
+!/original/README.md
+
+# Extracted/dumped game code
+/extracted/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store
