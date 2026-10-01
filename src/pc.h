@@ -66,6 +66,8 @@ typedef struct Pc {
     uint8_t crtc_index; /* 3D4 */
     uint8_t crtc[32];
     bool composite; /* display: composite monitor (artifact colour) vs RGB */
+    uint8_t font[256][8]; /* 8x8 text-mode glyphs, MSB = leftmost pixel (see main.c) */
+    bool blink_phase;     /* toggled by the front end for blinking text */
 
     /* speaker log for the current audio slice */
     SpeakerEvent speaker[PC_MAX_SPEAKER_EVENTS];

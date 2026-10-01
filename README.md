@@ -15,6 +15,7 @@ At the menu, pick **A** (colour composite) for the authentic colours, then **B**
 |---|---|
 | Numeric keypad / arrows / Home, End, PgUp, PgDn, Ins, Del | The original's keypad flight controls |
 | Letters, digits, F1–F10 | As in the original manual |
+| Esc | Open or close the "MFS Edit Mode" (Simulation Control) editor |
 | F10 | Toggle the monitor between composite (artifact colour) and RGB |
 | F11 | Emulation speed x1 / x2 / x4 / x8 (sound only plays at x1) |
 | F12 | Dump memory to `extracted/mem_dump.bin` |

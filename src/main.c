@@ -10,6 +10,7 @@
  *   --frames N          quit after N frames (each frame is exactly 1/60 s of emulated time)
  *   --screenshot FILE   save the last frame as BMP on quit
  *   --type TEXT         type TEXT, one key per second, starting after 2 seconds
+ *   --dump-on-exit      write extracted/mem_dump.bin on quit
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -40,6 +41,7 @@ typedef struct App {
     long max_frames;
     const char *screenshot;
     const char *type_text;
+    bool dump_on_exit;
 } App;
 
 static uint8_t xt_scancode(SDL_Scancode sc)
@@ -185,6 +187,58 @@ static void save_screenshot(App *app, const char *path)
     SDL_DestroySurface(s);
 }
 
+/* Builds the CGA text-mode font without shipping IBM's ROM: printable ASCII is read back
+ * from SDL's built-in public-domain debug font, and a few block/line glyphs are drawn here. */
+static void build_text_font(SDL_Renderer *renderer, uint8_t font[256][8])
+{
+    SDL_memset(font, 0, 256 * 8);
+    SDL_Texture *t = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, 95 * 8, 8);
+    if (t && SDL_SetRenderTarget(renderer, t)) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        SDL_SetRenderDrawColor(renderer, 255, 255, 255, 255);
+        for (int ch = 32; ch < 127; ch++) {
+            char s[2] = { (char)ch, 0 };
+            SDL_RenderDebugText(renderer, (float)((ch - 32) * 8), 0, s);
+        }
+        SDL_Surface *surf = SDL_RenderReadPixels(renderer, NULL);
+        SDL_Surface *rgba = surf ? SDL_ConvertSurface(surf, SDL_PIXELFORMAT_RGBA32) : NULL;
+        if (rgba) {
+            for (int ch = 32; ch < 127; ch++) {
+                for (int y = 0; y < 8; y++) {
+                    const uint8_t *row = (const uint8_t *)rgba->pixels + y * rgba->pitch + (ch - 32) * 8 * 4;
+                    for (int x = 0; x < 8; x++)
+                        if (row[x * 4] > 127)
+                            font[ch][y] |= (uint8_t)(0x80 >> x);
+                }
+            }
+        } else {
+            SDL_Log("Text font readback failed: %s", SDL_GetError());
+        }
+        SDL_DestroySurface(rgba);
+        SDL_DestroySurface(surf);
+        SDL_SetRenderTarget(renderer, NULL);
+    }
+    SDL_DestroyTexture(t);
+
+    for (int y = 0; y < 8; y++) {
+        font[0xDB][y] = 0xFF;                       /* full block */
+        font[0xDC][y] = y >= 4 ? 0xFF : 0x00;       /* lower half */
+        font[0xDF][y] = y < 4 ? 0xFF : 0x00;        /* upper half */
+        font[0xDD][y] = 0xF0;                       /* left half */
+        font[0xDE][y] = 0x0F;                       /* right half */
+        font[0xB0][y] = (y & 1) ? 0x22 : 0x88;      /* light shade */
+        font[0xB1][y] = (y & 1) ? 0x55 : 0xAA;      /* medium shade */
+        font[0xB2][y] = (y & 1) ? 0xDD : 0x77;      /* dark shade */
+        font[0xB3][y] = 0x18;                       /* vertical line */
+    }
+    font[0xC4][3] = font[0xC4][4] = 0xFF;           /* horizontal line */
+    static const uint8_t right[8] = { 0x80, 0xE0, 0xF8, 0xFE, 0xF8, 0xE0, 0x80, 0x00 };
+    static const uint8_t left[8] = { 0x02, 0x0E, 0x3E, 0xFE, 0x3E, 0x0E, 0x02, 0x00 };
+    SDL_memcpy(font[0x10], right, 8);
+    SDL_memcpy(font[0x11], left, 8);
+}
+
 static bool file_exists(const char *path)
 {
     SDL_PathInfo info;
@@ -234,6 +288,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
             app->max_frames = SDL_atoi(argv[++i]);
         else if (SDL_strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc)
             app->screenshot = argv[++i];
+        else if (SDL_strcmp(argv[i], "--dump-on-exit") == 0)
+            app->dump_on_exit = true;
         else if (SDL_strcmp(argv[i], "--type") == 0 && i + 1 < argc)
             app->type_text = argv[++i];
         else
@@ -279,6 +335,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         return SDL_APP_FAILURE;
     }
     SDL_SetRenderVSync(app->renderer, 1);
+    build_text_font(app->renderer, app->pc->font);
     /* CGA's 200 lines fill a 4:3 display */
     SDL_SetRenderLogicalPresentation(app->renderer, 640, 480, SDL_LOGICAL_PRESENTATION_LETTERBOX);
 
@@ -361,6 +418,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     if (app->audio && app->speed == 1 && SDL_GetAudioStreamQueued(app->audio) < AUDIO_RATE / 5 * 4)
         SDL_PutAudioStreamData(app->audio, app->samples, n * (int)sizeof(float));
 
+    pc->blink_phase = (SDL_GetTicks() / 267) & 1; /* CGA blinks at ~1.9 Hz */
     pc_render_cga(pc, app->pixels);
     SDL_UpdateTexture(app->screen, NULL, app->pixels, CGA_W * sizeof(uint32_t));
     SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 255);
@@ -380,12 +438,15 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
     App *app = appstate;
     if (!app)
         return;
+    if (app->dump_on_exit && app->pc)
+        dump_memory(app);
     if (app->screenshot && app->pc)
         save_screenshot(app, app->screenshot);
     if (app->pc) {
-        SDL_Log("Stopped at CS:IP %04X:%04X after %llu cycles, CGA mode %02X color %02X", app->pc->cpu.sregs[S_CS],
+        SDL_Log("Stopped at CS:IP %04X:%04X after %llu cycles, CGA mode %02X color %02X CRTC R1=%02X R6=%02X R9=%02X", app->pc->cpu.sregs[S_CS],
                 app->pc->cpu.ip,
-                (unsigned long long)app->pc->cpu.cycles, app->pc->cga_mode, app->pc->cga_color);
+                (unsigned long long)app->pc->cpu.cycles, app->pc->cga_mode, app->pc->cga_color,
+                app->pc->crtc[1], app->pc->crtc[6], app->pc->crtc[9]);
         pc_free(app->pc);
         SDL_free(app->pc);
     }

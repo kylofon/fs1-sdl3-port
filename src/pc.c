@@ -734,17 +734,25 @@ void pc_render_cga(const Pc *pc, uint32_t *px)
         return;
     }
 
-    /* Text mode: no ROM font is shipped, so draw each non-blank cell as a block. */
+    /* Text mode (40 or 80 columns, 8-line cells). Glyphs come from pc->font. */
     int cols = (mode & 0x01) ? 80 : 40;
     int cell_w = CGA_W / cols;
+    int lines = (pc->crtc[9] & 0x1F) + 1;
+    if (lines > 8)
+        lines = 8;
+    uint32_t start = (uint32_t)((pc->crtc[12] << 8 | pc->crtc[13]) * 2) & 0x3FFF;
+    bool blink_enabled = mode & 0x20;
     for (int y = 0; y < CGA_H; y++) {
-        int row = y / 8, cy = y % 8;
+        int row = y / lines, cy = y % lines;
         for (int x = 0; x < CGA_W; x++) {
             int col = x / cell_w, cx = (x % cell_w) * 8 / cell_w;
-            const uint8_t *cell = vram + (row * cols + col) * 2;
+            const uint8_t *cell = vram + ((start + (uint32_t)(row * cols + col) * 2) & 0x3FFF);
             uint8_t ch = cell[0], attr = cell[1];
-            bool on = ch != 0 && ch != ' ' && ch != 0xFF && cx < 7 && cy > 0 && cy < 7;
-            px[y * CGA_W + x] = cga_rgbi[on ? (attr & 0x0F) : ((attr >> 4) & 0x07)];
+            int bg = blink_enabled ? (attr >> 4) & 0x07 : attr >> 4;
+            bool on = pc->font[ch][cy] >> (7 - cx) & 1;
+            if (blink_enabled && (attr & 0x80) && pc->blink_phase)
+                on = false;
+            px[y * CGA_W + x] = cga_rgbi[on ? (attr & 0x0F) : bg];
         }
     }
 }
