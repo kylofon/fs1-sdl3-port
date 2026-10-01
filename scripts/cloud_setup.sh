@@ -11,9 +11,10 @@ PY=python3
 
 case "$(uname -s)" in
 MINGW*|MSYS*|CYGWIN*)
-    # Windows (Git Bash): use MSYS2's MinGW toolchain and SDL3; no apt.
+    # Windows (Git Bash): use MSYS2's MinGW toolchain and SDL3; no apt. Keep the regular
+    # Windows Python (picked before PATH changes), not MSYS2's, which has no pip.
+    PY="$(command -v python)"
     export PATH="/c/msys64/mingw64/bin:$PATH"
-    PY=python
     WINDOWS=1
     ;;
 esac
