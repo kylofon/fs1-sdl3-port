@@ -5,6 +5,9 @@ an agent can do them on a Linux machine without a display. Playtesting stays on 
 
 ## 1. The disk image
 
+The image is stored as an asset of the private release `disk-image` in this repo. It is not in git
+history. `scripts/cloud_setup.sh` downloads it with `gh` or `GITHUB_TOKEN`.
+
 The original image is copyrighted and is **not** in this repo. A session needs it at:
 
     original/Microsoft Flight Simulator v1.05 (198x)(Microsoft Corporation).ima   (163,840 bytes)
@@ -20,6 +23,9 @@ Check it with:
     python3 -c "import os; print(os.path.getsize('original/Microsoft Flight Simulator v1.05 (198x)(Microsoft Corporation).ima'))"
 
 ## 2. Setup (Debian/Ubuntu)
+
+All of this is automated by `bash scripts/cloud_setup.sh`, including fetching the image from the
+private `disk-image` release asset. The manual steps follow.
 
     sudo apt-get update
     sudo apt-get install -y build-essential cmake ninja-build git python3 python3-pip

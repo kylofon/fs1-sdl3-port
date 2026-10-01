@@ -27,6 +27,10 @@ add_executable(fs1
     src/pc.c
     src/native.c
 )
+# One file per native area (phase 3); new files are picked up on the next configure.
+file(GLOB NATIVE_AREA_SOURCES CONFIGURE_DEPENDS src/natives/*.c)
+target_sources(fs1 PRIVATE ${NATIVE_AREA_SOURCES})
+target_include_directories(fs1 PRIVATE src)
 target_link_libraries(fs1 PRIVATE SDL3::SDL3)
 
 if(MSVC)

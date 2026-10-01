@@ -3,51 +3,51 @@
 #include <SDL3/SDL.h>
 #include <stddef.h>
 
-/* ---- native routines ------------------------------------------------------------ */
+/* ---- registry ------------------------------------------------------------------
+ * Natives live in one file per area, src/natives/<area>.c, each defining a
+ * NativeEntry native_<area>[] table terminated by an entry with name == NULL.
+ * The areas are listed in src/natives/areas.h. */
 
-/* 0050:45FD sin_quadrant: BX = 0..4000h -> AX, from the word table at DS:3381 with
- * linear interpolation. Clobbers BX, DX, SI, DI like the original. Pass-through test
- * native for the framework (3.0); flags are not guaranteed. */
-static void n_sin_quadrant(Pc *pc)
+#define NATIVE_AREA(area) extern NativeEntry native_##area[];
+#include "natives/areas.h"
+#undef NATIVE_AREA
+
+#define MAX_ENTRIES 1024
+static NativeEntry *entries[MAX_ENTRIES];
+static int entry_count;
+
+static void collect_entries(void)
 {
-    Cpu8086 *c = &pc->cpu;
-    uint16_t ds = c->sregs[S_DS];
-    uint16_t x = c->regs[R_BX];
-    uint16_t bx = (uint16_t)(((uint16_t)(x << 1) >> 8) << 1);
-    uint16_t si = mem_read16(pc, ds, (uint16_t)(bx + 0x3381));
-    uint16_t di = (uint16_t)(mem_read16(pc, ds, (uint16_t)(bx + 0x3383)) - si);
-    int32_t p = (int32_t)(int16_t)(x & 0x7F) * (int16_t)di; /* IMUL DI -> DX:AX */
-    uint16_t ax = (uint16_t)p, dx = (uint16_t)((uint32_t)p >> 16);
-    dx = (uint16_t)(dx << 1 | ax >> 15); /* SHL AX,1 / RCL DX,1 */
-    ax = (uint16_t)(ax << 1);
-    ax = (uint16_t)((dx & 0xFF) << 8 | ax >> 8);
-    c->regs[R_AX] = (uint16_t)(ax + si);
-    c->regs[R_BX] = bx;
-    c->regs[R_DX] = dx;
-    c->regs[R_SI] = si;
-    c->regs[R_DI] = di;
-    native_ret(pc);
+    if (entry_count)
+        return;
+    NativeEntry *tables[] = {
+#define NATIVE_AREA(area) native_##area,
+#include "natives/areas.h"
+#undef NATIVE_AREA
+    };
+    for (size_t t = 0; t < SDL_arraysize(tables); t++)
+        for (NativeEntry *e = tables[t]; e->name && entry_count < MAX_ENTRIES; e++)
+            entries[entry_count++] = e;
 }
-
-static NativeEntry entries[] = {
-    { .name = "test_passthrough", .seg = GAME_CS, .off = 0x45FD, .fn = n_sin_quadrant, .enabled = false,
-      .cycles = 253 },
-};
-#define ENTRY_COUNT ((int)SDL_arraysize(entries))
+#define ENTRY_COUNT entry_count
 
 /* ---- dispatch ------------------------------------------------------------------- */
 
 static Pc *g_pc;
-static uint8_t hook_map[0x10000]; /* entry index + 1 per offset in GAME_CS */
+static uint8_t hook_map[0x10000]; /* nonzero where an enabled entry starts (GAME_CS) */
+static uint16_t hook_index[0x10000]; /* entry index + 1 per offset */
 static bool verifying;            /* inside a --verify run: everything executes as original */
 
 static void rebuild_map(void)
 {
+    collect_entries();
     bool any = false;
     SDL_memset(hook_map, 0, sizeof hook_map);
+    SDL_memset(hook_index, 0, sizeof hook_index);
     for (int i = 0; i < ENTRY_COUNT; i++) {
-        if (entries[i].enabled && entries[i].seg == GAME_CS) {
-            hook_map[entries[i].off] = (uint8_t)(i + 1);
+        if (entries[i]->enabled && entries[i]->seg == GAME_CS) {
+            hook_map[entries[i]->off] = 1;
+            hook_index[entries[i]->off] = (uint16_t)(i + 1);
             any = true;
         }
     }
@@ -271,7 +271,7 @@ static bool pre_exec(void *ctx, Cpu8086 *c)
     Pc *pc = ctx;
     if (verifying)
         return false;
-    NativeEntry *e = &entries[hook_map[c->ip] - 1];
+    NativeEntry *e = entries[hook_index[c->ip] - 1];
     if (e->verify) {
         verify_call(pc, e);
     } else {
@@ -286,6 +286,7 @@ static bool pre_exec(void *ctx, Cpu8086 *c)
 
 void native_init(Pc *pc)
 {
+    collect_entries();
     g_pc = pc;
     pc->cpu.hook_seg = GAME_CS;
     pc->cpu.pre_exec = pre_exec;
@@ -295,10 +296,11 @@ void native_init(Pc *pc)
 
 static bool for_name(const char *name, bool (*fn)(NativeEntry *, bool), bool arg)
 {
+    collect_entries();
     bool all = SDL_strcmp(name, "all") == 0, found = false;
     for (int i = 0; i < ENTRY_COUNT; i++) {
-        if (all || SDL_strcmp(entries[i].name, name) == 0) {
-            fn(&entries[i], arg);
+        if (all || SDL_strcmp(entries[i]->name, name) == 0) {
+            fn(entries[i], arg);
             found = true;
         }
     }
@@ -330,16 +332,18 @@ bool native_set_verify(const char *name)
 
 void native_list(void)
 {
+    collect_entries();
     SDL_Log("%-24s %-9s %-8s %s", "name", "address", "default", "flags");
     for (int i = 0; i < ENTRY_COUNT; i++)
-        SDL_Log("%-24s %04X:%04X %-8s %04X", entries[i].name, entries[i].seg, entries[i].off,
-                entries[i].enabled ? "on" : "off", entries[i].flag_mask);
+        SDL_Log("%-24s %04X:%04X %-8s %04X", entries[i]->name, entries[i]->seg, entries[i]->off,
+                entries[i]->enabled ? "on" : "off", entries[i]->flag_mask);
 }
 
 void native_verify_summary(void)
 {
+    collect_entries();
     for (int i = 0; i < ENTRY_COUNT; i++) {
-        const NativeEntry *e = &entries[i];
+        const NativeEntry *e = entries[i];
         if (!e->verify && !e->cap_hits)
             continue;
         if (!e->enabled)
