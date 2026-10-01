@@ -464,3 +464,8 @@ var 0618:12B4 cga_mirror_tbl table   ; [code] bit-reversal of 2-bpp pixels (mirr
 var 0618:13B8 alt_band_sprites table ; [code] 5 blit_sprite records
 var 0618:1400 indicator_force byte   ; [code] forced-redraw counter for draw_indicator
 var 0000:0122 panel_copy_seg word    ; [code] segment of the clean panel copy (erase source)
+
+
+# ---- from docs/subphases/3.9.md --------------------
+code 0050:121A fmt_signed_dec_print  ; [code] CX=8888, ES=[view_buf_seg], jumps into print_str_mask's loop (1233)
+code 0050:5CCD set_reloc_args        ; [code] ES=0618, CX=3A84 (data segment size), SI=DI=BP=0 for store_ds_for_isr
