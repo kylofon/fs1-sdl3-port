@@ -88,6 +88,8 @@ A minimal PC/XT core built for this one game:
 
 ### Phase 3: Replace routines with native C, one at a time
 
+Broken into subphases 3.0–3.22 in [PHASE3_PLAN.md](PHASE3_PLAN.md). Each is done by one agent and cleared by the user.
+
 - Bind C implementations to CS:IP traps, starting with leaf routines (line draw, multiply, sin/cos,
   plot) and working up through projection, scene rendering, instruments, flight model and the
   main loop.
