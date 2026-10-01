@@ -46,6 +46,10 @@ static void rebuild_map(void)
     SDL_memset(hook_index, 0, sizeof hook_index);
     for (int i = 0; i < ENTRY_COUNT; i++) {
         if (entries[i]->enabled && entries[i]->seg == GAME_CS) {
+            uint16_t prev = hook_index[entries[i]->off];
+            if (prev)
+                SDL_Log("native: %s and %s are both enabled at %04X:%04X; using %s", entries[prev - 1]->name,
+                        entries[i]->name, GAME_CS, entries[i]->off, entries[i]->name);
             hook_map[entries[i]->off] = 1;
             hook_index[entries[i]->off] = (uint16_t)(i + 1);
             any = true;
