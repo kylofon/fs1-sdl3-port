@@ -4,13 +4,17 @@
  * Phase 1: the original program runs on an embedded minimal PC (pc.c) and is
  * displayed, heard and controlled through SDL3. See docs/PORT_PLAN.md.
  *
- * Keys: F10 toggles composite/RGB monitor, F11 cycles emulation speed,
- *       F12 dumps memory to extracted/mem_dump.bin.
+ * Port keys (F1-F10 all belong to the game): F11 toggles composite/RGB monitor,
+ *       F12 cycles emulation speed, Ctrl+F12 dumps memory to extracted/mem_dump.bin.
  * Dev options:
  *   --frames N          quit after N frames (each frame is exactly 1/60 s of emulated time)
  *   --screenshot FILE   save the last frame as BMP on quit
+ *   --keys LIST         scripted key presses, comma separated FRAME:KEY[*HOLD_FRAMES],
+ *                       KEY is an SDL scancode name, e.g. "300:F2,400:Keypad 8*30"
+ *   --shot-at FRAME     also save FILE_FRAME.bmp at that frame (repeatable)
  *   --type TEXT         type TEXT, one key per second, starting after 2 seconds
  *   --dump-on-exit      write extracted/mem_dump.bin on quit
+ *   --rgb               start with the RGB (mono) display instead of composite
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -41,7 +45,12 @@ typedef struct App {
     long max_frames;
     const char *screenshot;
     const char *type_text;
+    struct { long frame, hold; uint8_t sc; } keys[64];
+    int key_count;
+    long shot_at[32];
+    int shot_count;
     bool dump_on_exit;
+    bool start_rgb;
 } App;
 
 static uint8_t xt_scancode(SDL_Scancode sc)
@@ -239,6 +248,54 @@ static void build_text_font(SDL_Renderer *renderer, uint8_t font[256][8])
     SDL_memcpy(font[0x11], left, 8);
 }
 
+static void parse_keys(App *app, const char *list)
+{
+    char *copy = SDL_strdup(list), *save = NULL;
+    for (char *tok = SDL_strtok_r(copy, ",", &save); tok; tok = SDL_strtok_r(NULL, ",", &save)) {
+        char *colon = SDL_strchr(tok, ':');
+        if (!colon || app->key_count >= (int)SDL_arraysize(app->keys))
+            continue;
+        *colon = 0;
+        char *name = colon + 1;
+        long hold = 1;
+        char *star = SDL_strrchr(name, '*');
+        if (star && star != name && star[1] >= '0' && star[1] <= '9') {
+            *star = 0;
+            hold = SDL_atoi(star + 1);
+        }
+        uint8_t sc = xt_scancode(SDL_GetScancodeFromName(name));
+        if (!sc) {
+            SDL_Log("--keys: unknown key '%s'", name);
+            continue;
+        }
+        app->keys[app->key_count].frame = SDL_atoi(tok);
+        app->keys[app->key_count].hold = hold < 1 ? 1 : hold;
+        app->keys[app->key_count].sc = sc;
+        app->key_count++;
+    }
+    SDL_free(copy);
+}
+
+static void run_key_script(App *app)
+{
+    /* Like a real keyboard, only the most recently pressed held key auto-repeats. */
+    int newest = -1;
+    for (int i = 0; i < app->key_count; i++) {
+        long rel = app->frame - app->keys[i].frame;
+        if (rel >= 0 && rel < app->keys[i].hold && (newest < 0 || app->keys[i].frame >= app->keys[newest].frame))
+            newest = i;
+    }
+    for (int i = 0; i < app->key_count; i++) {
+        long rel = app->frame - app->keys[i].frame;
+        if (rel < 0 || rel > app->keys[i].hold)
+            continue;
+        if (rel == app->keys[i].hold)
+            pc_key_event(app->pc, app->keys[i].sc | 0x80);
+        else if (rel == 0 || (i == newest && rel >= 30 && rel % 6 == 0)) /* 500 ms delay, then 10/s */
+            pc_key_event(app->pc, app->keys[i].sc);
+    }
+}
+
 static bool file_exists(const char *path)
 {
     SDL_PathInfo info;
@@ -288,9 +345,18 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
             app->max_frames = SDL_atoi(argv[++i]);
         else if (SDL_strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc)
             app->screenshot = argv[++i];
+        else if (SDL_strcmp(argv[i], "--rgb") == 0)
+            app->start_rgb = true;
         else if (SDL_strcmp(argv[i], "--dump-on-exit") == 0)
             app->dump_on_exit = true;
-        else if (SDL_strcmp(argv[i], "--type") == 0 && i + 1 < argc)
+        else if (SDL_strcmp(argv[i], "--keys") == 0 && i + 1 < argc)
+            parse_keys(app, argv[++i]);
+        else if (SDL_strcmp(argv[i], "--shot-at") == 0 && i + 1 < argc) {
+            if (app->shot_count < (int)SDL_arraysize(app->shot_at))
+                app->shot_at[app->shot_count++] = SDL_atoi(argv[++i]);
+            else
+                i++;
+        } else if (SDL_strcmp(argv[i], "--type") == 0 && i + 1 < argc)
             app->type_text = argv[++i];
         else
             disk_path = argv[i];
@@ -324,6 +390,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     if (!app->pc || !pc_init(app->pc, &app->disk))
         return SDL_APP_FAILURE;
     pc_boot(app->pc);
+    if (app->start_rgb)
+        app->pc->composite = false;
 
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         SDL_Log("SDL_Init failed: %s", SDL_GetError());
@@ -363,14 +431,14 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
     case SDL_EVENT_QUIT:
         return SDL_APP_SUCCESS;
     case SDL_EVENT_KEY_DOWN:
-        if (event->key.scancode == SDL_SCANCODE_F10) {
+        if (event->key.scancode == SDL_SCANCODE_F11) {
             if (!event->key.repeat) {
                 app->pc->composite = !app->pc->composite;
                 SDL_Log("Monitor: %s", app->pc->composite ? "composite" : "RGB");
             }
             break;
         }
-        if (event->key.scancode == SDL_SCANCODE_F11) {
+        if (event->key.scancode == SDL_SCANCODE_F12 && !(event->key.mod & SDL_KMOD_CTRL)) {
             if (!event->key.repeat) {
                 app->speed = app->speed >= 8 ? 1 : app->speed * 2;
                 SDL_Log("Emulation speed x%d", app->speed);
@@ -412,6 +480,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
             type_char(pc, app->type_text[i]);
     }
 
+    run_key_script(app);
     pc_run(pc, pc->cpu.cycles + (uint64_t)(seconds * PC_CPU_HZ * app->speed));
 
     int n = pc_speaker_render(pc, app->samples, SDL_arraysize(app->samples), AUDIO_RATE);
@@ -427,6 +496,14 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     SDL_RenderPresent(app->renderer);
 
     app->frame++;
+    for (int i = 0; i < app->shot_count; i++) {
+        if (app->shot_at[i] == app->frame && app->screenshot) {
+            char *path = NULL;
+            SDL_asprintf(&path, "%s_%ld.bmp", app->screenshot, app->frame);
+            save_screenshot(app, path);
+            SDL_free(path);
+        }
+    }
     if (app->max_frames && app->frame >= app->max_frames)
         return SDL_APP_SUCCESS;
     return SDL_APP_CONTINUE;

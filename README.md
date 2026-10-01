@@ -11,17 +11,45 @@ See [docs/PORT_PLAN.md](docs/PORT_PLAN.md).
 
 At the menu, pick **A** (colour composite) for the authentic colours, then **B** (regular flight).
 
+Arrows, Home/End/PgUp/PgDn, Ins and Del stand in for the numeric keypad. Bindings were
+verified by scripted key presses against the running game, except where marked *untested*.
+
 | Key | Action |
 |---|---|
-| Numeric keypad / arrows / Home, End, PgUp, PgDn, Ins, Del | The original's keypad flight controls |
-| Letters, digits, F1–F10 | As in the original manual |
-| Esc | Open or close the "MFS Edit Mode" (Simulation Control) editor |
-| F10 | Toggle the monitor between composite (artifact colour) and RGB |
-| F11 | Emulation speed x1 / x2 / x4 / x8 (sound only plays at x1) |
-| F12 | Dump memory to `extracted/mem_dump.bin` |
+| KP8 / ↑, KP2 / ↓ | Elevator: nose down / nose up |
+| KP4 / ←, KP6 / → | Ailerons left / right (rudder follows while auto-coordination is on) |
+| KP0 / Ins, KP+ | Rudder left / right (ailerons follow while auto-coordination is on) |
+| KP5 | Centre ailerons and rudder |
+| KP7 / Home, KP1 / End | Elevator trim down / up |
+| F2, F4, F6, F8, F10 | Throttle: full, increase, small increase, decrease, cut |
+| F1, F3, F5, F7, F9 | Flaps: up, 10°, 20°, 30°, 40° |
+| G | Landing gear (no effect on the ground) |
+| . (Del) | Brakes (on the ground) |
+| H / L | Carburettor heat / lights toggle |
+| 1 2 3 4 5 | Magnetos: off, left, right, both, start |
+| C, N, V, T | Select COM frequency, NAV frequency, OBI course, transponder digit (press again for the next field) |
+| `-` / `=` | Decrease / increase the selected item |
+| Num Lock / Scroll Lock | Radar (top-down) view on / off; `-`/`=` zoom the radar |
+| P | Pause |
+| KP\* | Restart the flight from the initial position |
+| Esc | "MFS Edit Mode" editor (positions, slew, Europe 1917 war mode, …) |
+| Ctrl+Alt+Del | Reboot to the display menu |
+| Tab | Shifts the picture horizontally on a real monitor (no visible effect here) |
+| Space, X, W, A | War mode: guns, bombs and war controls (*untested*) |
+| Alt | Slew mode: level the aircraft (*untested*) |
+| D, KP9, KP3, 0 | *Untested/unclear*; no visible effect from a standing start |
+
+Port keys (F1–F10 belong to the game):
+
+| Key | Action |
+|---|---|
+| F11 | Toggle the monitor between composite (artifact colour) and RGB |
+| F12 | Emulation speed x1 / x2 / x4 / x8 (sound only plays at x1) |
+| Ctrl+F12 | Dump memory to `extracted/mem_dump.bin` |
 
 Dev options: `--frames N` quits after N frames of 1/60 s, `--screenshot FILE.bmp` saves the last frame,
-and `--type TEXT` types TEXT one key per second.
+`--shot-at N` also saves `FILE_N.bmp` at frame N, `--keys "300:F2,400:Keypad 8*30"` scripts key presses,
+`--type TEXT` types TEXT one key per second, `--rgb` starts in RGB mode, and `--dump-on-exit` dumps memory.
 
 ## You need the original disk
 

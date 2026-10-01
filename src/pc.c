@@ -12,6 +12,8 @@
 
 /* ---- i8259 PIC --------------------------------------------------------------- */
 
+static void pc_power_on(Pc *pc);
+
 static void pic_raise(Pc *pc, int irq)
 {
     pc->pic_irr |= (uint8_t)(1 << irq);
@@ -528,6 +530,8 @@ static void hle(void *ctx, uint8_t n)
         }
         break;
     case 0x18: case 0x19:
+        SDL_Log("Reboot");
+        pc_power_on(pc);
         pc_boot(pc);
         break;
     default:
@@ -543,13 +547,23 @@ static void hle(void *ctx, uint8_t n)
 
 /* ---- machine ------------------------------------------------------------------- */
 
-bool pc_init(Pc *pc, Disk *disk)
+/* Power-on state: clears RAM and all devices but keeps the disk, display settings,
+ * font and the running cycle count (so timing and audio stay continuous). */
+static void pc_power_on(Pc *pc)
 {
+    uint8_t *mem = pc->mem;
+    Disk *disk = pc->disk;
+    bool composite = pc->composite;
+    uint64_t cycles = pc->cpu.cycles;
+    uint8_t font[256][8];
+    SDL_memcpy(font, pc->font, sizeof font);
+
     SDL_memset(pc, 0, sizeof *pc);
-    pc->mem = SDL_calloc(1, CPU_MEM_SIZE);
-    if (!pc->mem)
-        return false;
+    SDL_memset(mem, 0, CPU_MEM_SIZE);
+    pc->mem = mem;
     pc->disk = disk;
+    pc->composite = composite;
+    SDL_memcpy(pc->font, font, sizeof font);
 
     Cpu8086 *c = &pc->cpu;
     c->mem = pc->mem;
@@ -569,6 +583,9 @@ bool pc_init(Pc *pc, Disk *disk)
         pc->mem[n * 4 + 2] = (uint8_t)BIOS_SEG;
         pc->mem[n * 4 + 3] = (uint8_t)(BIOS_SEG >> 8);
     }
+    /* BIOS reset entry F000:E05B (the game jumps here on Ctrl+Alt+Del): trap to a reboot */
+    pc->mem[0xFE05B] = 0x0F;
+    pc->mem[0xFE05C] = 0x19;
     /* IBM PC model byte at F000:FFFE */
     pc->mem[0xFFFFE] = 0xFF;
 
@@ -588,7 +605,20 @@ bool pc_init(Pc *pc, Disk *disk)
     pc->pit[2] = (PitChannel){ .reload = 0x0533, .count = 0x533, .mode = 3, .access = 3, .loaded = true };
 
     cga_set_mode(pc, 3);
+    c->cycles = cycles;
+    pc->speaker_slice_start = cycles;
+    pc->kbd_next_cycle = cycles;
+}
+
+bool pc_init(Pc *pc, Disk *disk)
+{
+    SDL_memset(pc, 0, sizeof *pc);
+    pc->mem = SDL_calloc(1, CPU_MEM_SIZE);
+    if (!pc->mem)
+        return false;
+    pc->disk = disk;
     pc->composite = true;
+    pc_power_on(pc);
     return true;
 }
 
