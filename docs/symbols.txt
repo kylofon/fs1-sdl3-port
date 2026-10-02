@@ -561,34 +561,3 @@ var 0618:204C reality_mode byte
 var 0618:206A season byte
 var 0618:2073 shear_tops table       ; [code] 3 words, altitude units at run time
 var 0618:2079 wind_layers table      ; [code] 4 x (speed lo / turbulence hi, direction): 3, 2, 1, surface
-
-
-# ---- from docs/subphases/3.11.md --------------------
-code 0050:037E upd_turn              ; [code] turn_rate -> sprite DS:16DD[-6..6] (state [0403])
-code 0050:04A5 turn_clear            ; [code] clears 3 words x 13 rows from B800:1AE4
-code 0050:1375 heading_readout       ; [code] 3 heading digits at [0799], print_str_mask 5555h
-code 0050:151C clock_text            ; [code] seconds; minute roll -> 1540
-code 0050:1540 clock_hm              ; [code] minutes, hours, update_time_of_day
-code 0050:1577 text_07c5             ; [code] print_str_dim 07C5 behind panel_text_gate
-code 0050:1582 switch_text           ; [code] gear/lights/magnetos/carb labels
-code 0050:207C upd_vsi               ; [code] vertical_speed history 091B (10 words) -> draw_needle2 094D
-code 0050:20C0 upd_tach              ; [code] [1DC0]*3B6h>>8 + 8Ah -> draw_needle2 0957
-code 0050:2231 mask_apply            ; [code] per changed panel_mask bit: 5AD7 clear or 5AF3 + call [rec+4]
-code 0050:2419 obi_display           ; [code] OBI needle/glide slope animation, TO/FROM, marker lamps
-code 0050:240E obi_check             ; [code] obi_display only if [1A11] != [1A10]
-code 0050:2474 obi_needle            ; [code] needle column for position BL (records DS:1A25, 3 bytes)
-code 0050:24B9 obi_glideslope        ; [code] 5555h at row_offsets[BL+7Ah]+2Ch
-code 0050:24D6 obi_flag_text         ; [code] TO/FROM text by [1A14]
-code 0050:24F4 obi_restore           ; [code] OBI area from the view buffer
-code 0050:2620 attitude_fast         ; [code] 262C if |roll_rate| > 500h
-code 0050:262C attitude              ; [code] attitude indicator
-code 0050:293F ai_span               ; [code] fill columns DH..DL of row CL with colour pair DS:1CEB+BL
-code 0050:2A3E bank_pointer          ; [code] XOR bank dots (angles DS:1D31, positions DS:1CEF)
-code 0050:5B88 xor_dot               ; [code] XOR pattern DS:3A00 at row BL, column CX
-var 0618:1A10 obi_needle_pos byte    ; [code] drawn OBI needle (target [1A11])
-var 0618:1A12 gs_needle_pos byte     ; [code] drawn glide slope (target [1A13])
-var 0618:1A14 obi_flag byte          ; [code] 0/1/2 TO/FROM/off text; [1A15] drawn
-var 0618:1B22 ai_rows word           ; [code] 9876h: attitude rows 76h..98h
-var 0618:1BAB ai_row_records table   ; [code] 8 bytes per row: +1/+2 edges, +3/+4 colour, +5/+6 horizon column
-var 0618:1B27 bank_ptr_pos byte      ; [code] drawn bank pointer ([1B28] = drawn flag)
-var 0618:08F7 ball_value word        ; [code] turn coordinator ball

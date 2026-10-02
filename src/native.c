@@ -288,22 +288,6 @@ static bool pre_exec(void *ctx, Cpu8086 *c)
 
 /* ---- setup and reporting -------------------------------------------------------- */
 
-bool native_call(Pc *pc, uint16_t off)
-{
-    if (verifying || !hook_index[off] || !g_pc || !pc->cpu.hook_map)
-        return false;
-    NativeEntry *e = entries[hook_index[off] - 1];
-    if (!e->enabled || e->seg != GAME_CS)
-        return false;
-    Cpu8086 *c = &pc->cpu;
-    e->calls++;
-    c->ip = off;
-    c->sregs[S_CS] = GAME_CS;
-    e->fn(pc);
-    c->cycles += e->cycles ? e->cycles : NATIVE_CALL_CYCLES;
-    return true;
-}
-
 void native_init(Pc *pc)
 {
     collect_entries();
