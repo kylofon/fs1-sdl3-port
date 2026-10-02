@@ -12,6 +12,7 @@
  * (3.9 exports no callable C print_str; stepping with hooks on would run 3.9's natives but
  * nests a --verify of print_str inside this native's, which corrupts the verify logs.) */
 #include "native.h"
+#include "game/state.h"
 
 static uint32_t cyc; /* original cycles of the routine being run */
 
@@ -124,7 +125,7 @@ static bool text_gate(Pc *pc, uint16_t ret_ip)
 {
     call_push(pc, ret_ip);
     cyc += 14; /* test word ptr [panel_mask], 8000h */
-    bool on = (m16(pc, 0x19A3) & 0x8000) != 0;
+    bool on = (gs_panel_mask(pc) & 0x8000) != 0;
     JCC(on);
     if (on) {
         ret_pop(pc);
@@ -157,8 +158,8 @@ static void freq_bcd(Pc *pc, uint16_t freq)
 
 static void nav_search_body(Pc *pc)
 {
-    w8(pc, 0x31D5, 0);
-    w8(pc, 0x31D3, 1);
+    gs_set_nav_found(pc, 0);
+    gs_set_nav_search(pc, 1);
     cyc += 19 + 19 + 20;
 }
 
@@ -184,7 +185,7 @@ static void n_nav_tune(Pc *pc)
         cyc += 4;
         call_orig(pc, 0x1456, PRINT_STR_DIM);
         freq_bcd(pc, 0x07B1);
-        w16(pc, 0x03FF, REG(AX));
+        gs_set_nav_bcd(pc, REG(AX));
         cyc += 12;
         nav_search_body(pc);
     } else {
@@ -207,9 +208,9 @@ static void n_com_tune(Pc *pc)
         cyc += 4;
         call_orig(pc, 0x1497, PRINT_STR_DIM);
         freq_bcd(pc, 0x07A6);
-        w16(pc, 0x03F2, REG(AX));
-        w8(pc, 0x3628, 1);
-        w8(pc, 0x31DE, 1);
+        gs_set_com_bcd(pc, REG(AX));
+        gs_set_atis_idle(pc, 1);
+        gs_set_com_search(pc, 1);
         cyc += 12 + 19 + 19;
     }
     cyc += 20;
@@ -250,15 +251,15 @@ static void course_digits(Pc *pc, uint16_t ret_ip)
 static void n_obi_readout(Pc *pc)
 {
     cyc = 14;
-    bool off = (m16(pc, 0x19A3) & 0x0020) == 0;
+    bool off = (gs_panel_mask(pc) & 0x0020) == 0;
     JCC(off);
     if (!off) {
-        SET_LO(AX, m8(pc, 0x06A4));
+        SET_LO(AX, m8(pc, GS_OBI_COURSE));
         cyc += 12;
         course_digits(pc, 0x14D7);
-        w8(pc, 0x07BB, LO(DX));
-        w16(pc, 0x07BC, REG(AX));
-        SET_LO(AX, m8(pc, 0x06A4));
+        gs_set_obi_readout_rec_b(pc, 2, LO(DX));
+        w16(pc, (uint16_t)(GS_OBI_READOUT_REC + 3), REG(AX));
+        SET_LO(AX, m8(pc, GS_OBI_COURSE));
         cyc += 18 + 12 + 12;
         bool borrow = LO(AX) < 0x5A;
         SET_LO(AX, (uint8_t)(LO(AX) - 0x5A));
@@ -269,8 +270,8 @@ static void n_obi_readout(Pc *pc)
             cyc += 6;
         }
         course_digits(pc, 0x14EA);
-        w8(pc, 0x07C1, LO(DX));
-        w16(pc, 0x07C2, REG(AX));
+        gs_set_obi_readout_rec_b(pc, 8, LO(DX));
+        w16(pc, (uint16_t)(GS_OBI_READOUT_REC + 9), REG(AX));
         REG(SI) = 0x07B9;
         REG(BP) = 0x3333;
         SET_LO(DX, 4);
@@ -426,15 +427,15 @@ static void n_nav_compute(Pc *pc)
     uint16_t ax = REG(AX), bx = REG(BX), cx = REG(CX), dx = REG(DX), si = REG(SI), di = REG(DI);
     uint16_t ss = SREG(SS), sp = REG(SP);
     cyc = 14;
-    bool found = m8(pc, 0x31D5) != 0;
+    bool found = gs_nav_found(pc) != 0;
     JCC(found);
     bool off = true; /* jump to 2394 */
     if (found) {
         /* (pos - station) << 4: high words in 16 m units */
-        uint32_t dn = ((uint32_t)m16(pc, 0x30DB) << 16 | m16(pc, 0x30D9)) -
-                      ((uint32_t)m16(pc, 0x31DC) << 16 | m16(pc, 0x31DA));
-        uint32_t de = ((uint32_t)m16(pc, 0x30D3) << 16 | m16(pc, 0x30D1)) -
-                      ((uint32_t)m16(pc, 0x31D8) << 16 | m16(pc, 0x31D6));
+        uint32_t dn = ((uint32_t)m16(pc, (uint16_t)(GS_POS_NORTH + 2)) << 16 | m16(pc, GS_POS_NORTH)) -
+                      ((uint32_t)gs_nav_station_w(pc, 3) << 16 | gs_nav_station_w(pc, 2));
+        uint32_t de = ((uint32_t)m16(pc, (uint16_t)(GS_POS_EAST + 2)) << 16 | m16(pc, GS_POS_EAST)) -
+                      ((uint32_t)gs_nav_station_w(pc, 1) << 16 | gs_nav_station_w(pc, 0));
         dn <<= 4;
         de <<= 4;
         ax = (uint16_t)dn, cx = (uint16_t)(dn >> 16);
@@ -470,8 +471,8 @@ static void n_nav_compute(Pc *pc)
             run_instead(pc, CYC_NAV_COMPUTE);
             return;
         }
-        w16(pc, 0x1A21, n21);
-        w16(pc, 0x1A23, n23);
+        gs_set_nav_dn(pc, n21);
+        gs_set_nav_de(pc, n23);
         wr16(pc, ss, (uint16_t)(sp - 2), 0x2300);
         if (b.inner_ret)
             wr16(pc, ss, (uint16_t)(sp - 4), b.inner_ret);
@@ -479,7 +480,7 @@ static void n_nav_compute(Pc *pc)
 
         /* magnetic: subtract the area's variation, wrap to 0..437h */
         bx = dx;
-        ax = (uint16_t)(m16(pc, 0x0917) + m16(pc, 0x0915));
+        ax = (uint16_t)(gs_wind_gust_offset(pc) + gs_wind_dir_offset(pc));
         uint32_t p = (uint32_t)ax * 0x438;
         ax = (uint16_t)p, dx = (uint16_t)(p >> 16);
         bx = (uint16_t)(bx - dx);
@@ -503,14 +504,14 @@ static void n_nav_compute(Pc *pc)
 
         /* course: the localizer's from the scenery for x.x5 frequencies, else the OBI */
         cyc += 19;
-        bool ils = m8(pc, 0x07B7) == 0x35;
+        bool ils = gs_nav_freq_ch(pc, 6) == 0x35;
         JCC(!ils);
         if (ils) {
-            ax = m16(pc, 0x1A1F);
-            w16(pc, 0x1A1F, 0);
+            ax = gs_ils_course(pc);
+            gs_set_ils_course(pc, 0);
             cyc += 5 + 26 + 17;
         } else {
-            ax = (uint16_t)(m8(pc, 0x06A4) * 6);
+            ax = (uint16_t)(m8(pc, GS_OBI_COURSE) * 6);
             cx = (uint16_t)((cx & 0xFF00) | 6);
             cyc += 12 + 4 + 72;
         }
@@ -573,7 +574,7 @@ static void n_nav_compute(Pc *pc)
             }
         }
         if (flag != 0) {
-            w8(pc, 0x1A14, flag);
+            gs_set_nav_flag(pc, flag);
             cyc += 19 + 17;
             off = false;
         }
@@ -581,7 +582,7 @@ static void n_nav_compute(Pc *pc)
         cyc += 17; /* jmp 2394 */
     }
     if (off) {
-        w8(pc, 0x1A14, 0);
+        gs_set_nav_flag(pc, 0);
         bx = 0;
         cyc += 19 + 5;
     }
@@ -607,24 +608,24 @@ static void n_nav_compute(Pc *pc)
         }
     }
     ax = (uint16_t)(0x1E - ax);
-    w8(pc, 0x1A11, (uint8_t)ax);
+    gs_set_loc_target(pc, (uint8_t)ax);
     cyc += 5 + 6 + 12;
 
     /* glide slope, when the scenery stored its angle this pass */
-    ax = m16(pc, 0x1A1D);
-    w16(pc, 0x1A1D, 0);
+    ax = gs_ils_param(pc);
+    gs_set_ils_param(pc, 0);
     cyc += 5 + 26 + 5;
     JCC(ax == 0);
     if (ax != 0) {
         di = ax;
-        bx = m16(pc, 0x1A21);
+        bx = (uint16_t)gs_nav_dn(pc);
         cyc += 4 + 17 + 5;
         JCC((int16_t)bx >= 0);
         if ((int16_t)bx < 0) {
             bx = (uint16_t)-bx;
             cyc += 5;
         }
-        ax = m16(pc, 0x1A23);
+        ax = (uint16_t)gs_nav_de(pc);
         cyc += 12 + 5;
         JCC((int16_t)ax >= 0);
         if ((int16_t)ax < 0) {
@@ -637,7 +638,7 @@ static void n_nav_compute(Pc *pc)
             bx = ax;
             cyc += 4;
         }
-        dx = (uint16_t)(m16(pc, 0x0919) >> 1);
+        dx = (uint16_t)(gs_alt_m(pc) >> 1);
         cyc += 17 + 8 + 5;
         bool below = (int16_t)dx < (int16_t)bx;
         JCC(below);
@@ -671,7 +672,7 @@ static void n_nav_compute(Pc *pc)
             cyc += 8;
         }
         bx = (uint16_t)((bx & 0xFF00) | bl);
-        w8(pc, 0x1A13, bl);
+        gs_set_gs_target(pc, bl);
         cyc += 18;
     }
     cyc += 20;
@@ -697,7 +698,7 @@ static void atis_copy_line(Pc *pc, uint16_t ret_ip)
     int16_t step = (pc->cpu.flags & F_DF) ? -1 : 1;
     uint16_t es = SREG(ES), ds = SREG(DS);
     for (int part = 0; part < 2; part++) {
-        REG(DI) = part ? REG(BX) : (uint16_t)(REG(BX) + m16(pc, 0x3622));
+        REG(DI) = part ? REG(BX) : (uint16_t)(REG(BX) + gs_atis_ring_a(pc));
         REG(CX) = m16(pc, part ? 0x3622 : 0x3624);
         cyc += part ? 4 + 17 : 4 + 18 + 17;
         cyc += 2 + 17u * REG(CX);
@@ -732,24 +733,24 @@ static bool atis_next_char(Pc *pc)
 {
     call_push(pc, 0x4F21);
     cyc += 19;
-    bool frag = m8(pc, 0x362A) != 0;
+    bool frag = gs_atis_in_fragment(pc) != 0;
     JCC(!frag);
     if (frag) {
-        uint16_t p = m16(pc, 0x362B);
+        uint16_t p = gs_atis_frag_ptr(pc);
         REG(SI) = p;
-        w16(pc, 0x362B, (uint16_t)(p + 1));
+        gs_set_atis_frag_ptr(pc, (uint16_t)(p + 1));
         SET_LO(AX, m8(pc, p));
         cyc += 17 + 12 + 17 + 5;
         JCC(LO(AX) != 0);
         if (LO(AX) == 0) {
-            w8(pc, 0x362A, (uint8_t)(m8(pc, 0x362A) - 1));
+            gs_set_atis_in_fragment(pc, (uint8_t)(gs_atis_in_fragment(pc) - 1));
             SET_LO(AX, 0x20);
             cyc += 12 + 4;
         }
         ret_pop(pc);
         return true;
     }
-    w16(pc, 0x3626, (uint16_t)(m16(pc, 0x3626) + 1));
+    gs_set_atis_ptr(pc, (uint16_t)(gs_atis_ptr(pc) + 1));
     cyc += 12 + 5;
     uint8_t al = LO(AX);
     JCC(al & 0x80);
@@ -757,8 +758,8 @@ static bool atis_next_char(Pc *pc)
         REG(AX) = (uint16_t)((REG(AX) & 0x7F) << 1);
         REG(SI) = REG(AX);
         REG(AX) = m16(pc, (uint16_t)(REG(SI) + 0x362D));
-        w16(pc, 0x362B, REG(AX));
-        w8(pc, 0x362A, (uint8_t)(m8(pc, 0x362A) + 1));
+        gs_set_atis_frag_ptr(pc, REG(AX));
+        gs_set_atis_in_fragment(pc, (uint8_t)(gs_atis_in_fragment(pc) + 1));
         SET_LO(AX, 0x20);
         cyc += 6 + 8 + 4 + 17 + 12 + 12 + 4;
         ret_pop(pc);
@@ -769,7 +770,7 @@ static bool atis_next_char(Pc *pc)
         ret_pop(pc);
         return true;
     }
-    w8(pc, 0x3628, 1);
+    gs_set_atis_idle(pc, 1);
     REG(AX) = cpu_pop(&pc->cpu);
     cyc += 19 + 12 + 20;
     return false; /* its RET returns from atis_tick (the native's native_ret) */
@@ -780,39 +781,39 @@ static bool atis_next_char(Pc *pc)
 static void atis_tick_body(Pc *pc)
 {
     cyc = 14;
-    bool editor = m8(pc, 0x03F5) != 0;
+    bool editor = gs_editor_active(pc) != 0;
     JCC(editor);
     if (editor) {
         cyc += 20;
         return;
     }
-    SREG(ES) = m16(pc, 0x03C2);
+    SREG(ES) = gs_screen_seg(pc);
     cyc += 11 + 14;
-    bool idle = m8(pc, 0x3628) != 0;
+    bool idle = gs_atis_idle(pc) != 0;
     JCC(!idle);
     if (idle) {
-        uint8_t n = (uint8_t)(m8(pc, 0x3629) - 1);
-        w8(pc, 0x3629, n);
+        uint8_t n = (uint8_t)(gs_atis_idle_count(pc) - 1);
+        gs_set_atis_idle_count(pc, n);
         cyc += 12;
         JCC(n != 0);
         if (n == 0) {
             /* message over: hold the counter at 1 and restore the full view window */
-            w8(pc, 0x3629, 1);
-            w16(pc, 0x3802, 0x0848);
-            w16(pc, 0x3804, 0x0848);
-            w16(pc, 0x3808, 0x0000);
-            w16(pc, 0x380A, 0x2000);
-            w8(pc, 0x362A, 0);
+            gs_set_atis_idle_count(pc, 1);
+            gs_set_blit_words0(pc, 0x0848);
+            gs_set_blit_words1(pc, 0x0848);
+            gs_set_blit_off0(pc, 0x0000);
+            gs_set_blit_off1(pc, 0x2000);
+            gs_set_atis_in_fragment(pc, 0);
             cyc += 12 + 19 * 5 + 20;
             return;
         }
     } else {
-        w8(pc, 0x3629, 0x4E);
+        gs_set_atis_idle_count(pc, 0x4E);
         cyc += 19;
     }
 
     /* scroll: redraw the 5 line buffers rotated, then advance the ring by one byte */
-    SREG(ES) = m16(pc, 0x3490);
+    SREG(ES) = gs_atis_seg(pc);
     cyc += 11;
     atis_clear_line(pc, 0);
     static const uint16_t dst[5] = { 0x2000, 0x0050, 0x2050, 0x00A0, 0x20A0 };
@@ -824,17 +825,17 @@ static void atis_tick_body(Pc *pc)
         atis_copy_line(pc, rets[i]);
     }
     atis_clear_line(pc, 0x00F0);
-    w16(pc, 0x3624, (uint16_t)(m16(pc, 0x3624) + 1));
-    uint16_t start = (uint16_t)(m16(pc, 0x3622) - 1);
-    w16(pc, 0x3622, start);
+    gs_set_atis_ring_b(pc, (uint16_t)(gs_atis_ring_b(pc) + 1));
+    uint16_t start = (uint16_t)(gs_atis_ring_a(pc) - 1);
+    gs_set_atis_ring_a(pc, start);
     cyc += 12 + 12;
     JCC((int16_t)start >= 0);
     if ((int16_t)start < 0) {
-        w16(pc, 0x3624, 0);
-        w16(pc, 0x3622, 0x50);
+        gs_set_atis_ring_b(pc, 0);
+        gs_set_atis_ring_a(pc, 0x50);
         cyc += 19 + 19;
     }
-    uint16_t bx = m16(pc, 0x3624);
+    uint16_t bx = gs_atis_ring_b(pc);
     REG(BX) = bx;
     for (int i = 0; i < 5; i++)
         w8(pc, (uint16_t)(bx + 0x3492 + 0x50 * i), 0);
@@ -847,21 +848,21 @@ static void atis_tick_body(Pc *pc)
 
     /* every second step: the next character into the right end of the line buffers */
     cyc += 14;
-    bool done = m8(pc, 0x3628) != 0;
+    bool done = gs_atis_idle(pc) != 0;
     JCC(done);
     if (done) {
         cyc += 20;
         return;
     }
-    REG(SI) = m16(pc, 0x3626);
+    REG(SI) = gs_atis_ptr(pc);
     SET_LO(AX, m8(pc, REG(SI)));
     cyc += 17 + 17;
     if (!atis_next_char(pc))
         return;
-    w16(pc, 0x3802, 0x07A8);
-    w16(pc, 0x3804, 0x07D0);
-    w16(pc, 0x3808, 0x0140);
-    w16(pc, 0x380A, 0x20F0);
+    gs_set_blit_words0(pc, 0x07A8);
+    gs_set_blit_words1(pc, 0x07D0);
+    gs_set_blit_off0(pc, 0x0140);
+    gs_set_blit_off1(pc, 0x20F0);
     bx = (uint16_t)(bx - 1);
     REG(BX) = bx;
     REG(AX) = (uint16_t)(uint8_t)(LO(AX) - 0x20);
@@ -919,7 +920,7 @@ static void num_digits(Pc *pc, bool byte_arg, uint16_t ret_ip)
 static void atis_start_body(Pc *pc)
 {
     /* temperature: by season [206A]-1, plus [202A] */
-    uint8_t al = (uint8_t)((m8(pc, 0x206A) - 1) & 3);
+    uint8_t al = (uint8_t)((gs_season(pc) - 1) & 3);
     REG(BX) = al;
     SET_LO(AX, (uint8_t)(m8(pc, (uint16_t)(REG(BX) + 0x31E4)) + m8(pc, 0x202A)));
     cyc += 12 + 5 + 6 + 4 + 5 + 17 + 18;
@@ -928,7 +929,7 @@ static void atis_start_body(Pc *pc)
     cyc += 12;
 
     /* wind direction in degrees */
-    uint32_t p = (uint32_t)0x168 * m16(pc, 0x2087);
+    uint32_t p = (uint32_t)0x168 * gs_wind_layers_w(pc, 7);
     REG(AX) = (uint16_t)(p >> 16);
     REG(DX) = (uint16_t)(p >> 16);
     cyc += 4 + 127 + 4;
@@ -944,7 +945,7 @@ static void atis_start_body(Pc *pc)
     cyc += 18;
 
     /* wind speed */
-    SET_LO(AX, m8(pc, 0x2085));
+    SET_LO(AX, gs_wind_layers_b(pc, 12));
     cyc += 12;
     num_digits(pc, true, 0x4FF8);
     cyc += 6;
@@ -957,8 +958,8 @@ static void atis_start_body(Pc *pc)
     cyc += 12;
 
     /* time in Zulu: clock_hour + utc_offset */
-    SET_LO(AX, m8(pc, 0x2068));
-    REG(AX) = (uint16_t)(REG(AX) + m16(pc, 0x1E24));
+    SET_LO(AX, gs_clock_hour(pc));
+    REG(AX) = (uint16_t)(REG(AX) + gs_utc_offset(pc));
     cyc += 12 + 18 + 6;
     bool lt = (int8_t)LO(AX) < 0x18;
     JCC(lt);
@@ -1000,7 +1001,7 @@ static void atis_start_body(Pc *pc)
     }
 
     /* runway in use: the station's runway for the wind quadrant [2087] >> 14 */
-    REG(AX) = (uint16_t)((m16(pc, 0x2087) >> 8) << 2);
+    REG(AX) = (uint16_t)((gs_wind_layers_w(pc, 7) >> 8) << 2);
     REG(BX) = (uint16_t)(REG(AX) >> 8);
     SET_LO(AX, m8(pc, (uint16_t)(REG(BX) + 0x31E0)));
     cyc += 12 + 4 + 5 + 16 + 4 + 5 + 17;

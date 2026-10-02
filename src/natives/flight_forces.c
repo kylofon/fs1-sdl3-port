@@ -14,93 +14,26 @@
  * cpu8086.c model), so the emulated timeline stays the same with the natives on. No caller
  * tests the flags afterwards, so none are reproduced (.flag_mask = 0). */
 #include "native.h"
+#include "game/state.h"
 #include "fixmath.h"
 
 /* ---- game variables (DS = 0618) --------------------------------------------------- */
 
 /* controls and configuration */
-#define V_PAUSED         0x0404 /* byte */
-#define V_SOUND_STATE    0x0548 /* byte: 1 = stall horn */
-#define V_STALLED        0x0558 /* byte: 1 while the wing is stalled (write only) */
-#define V_AILERON        0x0573
-#define V_RUDDER         0x058C
-#define V_WING_DAMAGE    0x1E83 /* byte: 1 = left wing shot off (war mode) */
-#define V_SLEW_MODE      0x204B /* byte */
 
 /* aircraft state */
-#define V_AIR_DENSITY    0x0832
-#define V_AOA            0x0836 /* angle_of_attack */
-#define V_PITCH          0x0838 /* flight-path pitch, binary angle */
-#define V_BANK           0x083C
-#define V_HEADING        0x0870
-#define V_ON_GROUND      0x086F /* byte */
-#define V_THRUST         0x08A4
-#define V_AIRSPEED       0x08A8
-#define V_WEIGHT         0x08B4
-#define V_INV_MASS       0x088C
 
 /* terms precomputed elsewhere (key handlers, flight_params) */
-#define V_GEAR_DRAG      0x083E /* [08CA] gear down or [08CC] gear up (sub_0D01) */
-#define V_ELEV_AOA       0x0862 /* elevator * [08DA] (sub_0F25) */
-#define V_FLAPS_DRAG     0x0866 /* flaps * [08DC] (set_flaps) */
-#define V_AILERON_CL     0x087A /* aileron * [08F2] (sub_0FB3) */
-#define V_FLAPS_CL       0x0882 /* flaps * [08F4] (set_flaps) */
-#define V_PITCH_GAIN     0x088E /* from flight_params */
 
 /* written by control_coupling / wing_cl_offsets */
-#define V_CROSS_CONTROL  0x084A /* aileron/2 - rudder/2 */
-#define V_SLIP_YAW       0x084C /* cross control * [08D2]: yaw per unit airspeed */
-#define V_SLIP_CL        0x084E /* cross control * [08D0]: extra left-wing CL */
-#define V_SLIP_DRAG      0x0872 /* cross control * [08E4] */
-#define V_SLIP_ROLL      0x08A2 /* cross control * [08D4]: read by flight_integrate */
-#define V_CL_OFS_LEFT    0x087E
-#define V_CL_OFS_RIGHT   0x0880
 
 /* constants (read only, set at start-up) */
-#define K_CL0            0x08C8 /* base lift coefficient of the wing */
-#define K_DRAG_SCALE     0x08CE
 #define K_SLIP_CL        0x08D0
 #define K_SLIP_YAW       0x08D2
 #define K_SLIP_ROLL      0x08D4
-#define K_PITCH_TO_V     0x08E2
 #define K_SLIP_DRAG      0x08E4
-#define K_TURN_GAIN      0x08E6
-#define K_ACCEL_TO_PITCH 0x08E8
-#define K_FRICTION       0x08EC /* drag added whenever the aircraft moves */
-#define K_LIFT_SLOPE     0x08F0
 
 /* written by flight_forces */
-#define V_PITCH_FROM_ACC 0x0834 /* pitch_rate * [08E2] >> 8 (speed change from pitching) */
-#define V_COS_PITCH      0x0840
-#define V_COS_BANK       0x0844
-#define V_WEIGHT_NORMAL  0x0848 /* weight * cos(pitch) */
-#define V_COS2_BANK      0x0850 /* cos(bank) * |cos(bank)| */
-#define V_PITCH_RATE     0x0852
-#define V_LIFT_HORIZ     0x0856 /* lift * sin(bank) */
-#define V_TURN_RATE      0x085A
-#define V_DRAG           0x085C
-#define V_ACCEL          0x085E
-#define V_NET_FORCE      0x0864 /* thrust - drag */
-#define V_DRAG_COEF      0x0874 /* CL_left^2 + CL_right^2 + slip + flaps */
-#define V_DRAG_SCALED    0x0876
-#define V_DRAG_TOTAL     0x0878 /* + gear */
-#define V_CL_AOA         0x087C /* AoA * lift slope */
-#define V_LIFT_LEFT      0x0886
-#define V_LIFT_RIGHT     0x0888
-#define V_LIFT           0x0884
-#define V_ROLL_MOMENT    0x0892 /* (left - right) lift * 4: read by flight_integrate */
-#define V_SIN_PITCH      0x089A
-#define V_SIN_BANK       0x089C
-#define V_WEIGHT_ALONG   0x08A0 /* weight * sin(pitch) */
-#define V_NORMAL_FORCE   0x08A6 /* lift * cos^2(bank) - weight * cos(pitch) */
-#define V_INV_V          0x08AA /* 280h / V (Q15) */
-#define V_PITCH_ACCEL    0x08AC /* normal force / V */
-#define V_SQ_V           0x08AE /* airspeed_sq */
-#define V_ACC_TO_PITCH   0x08B0 /* accel * [08E8] >> 8 */
-#define V_CL_LEFT        0x08B8
-#define V_CL_RIGHT       0x08BA
-#define V_CL2_LEFT       0x08BC
-#define V_CL2_RIGHT      0x08BE
 
 /* ---- fixed-point products, exactly as the original's IMUL idioms ------------------- */
 
@@ -123,9 +56,6 @@ static int16_t mul_mid(int16_t a, int16_t b)
 
 static uint16_t rd16(Pc *pc, uint16_t off) { return mem_read16(pc, pc->cpu.sregs[S_DS], off); }
 static int16_t rds(Pc *pc, uint16_t off) { return (int16_t)rd16(pc, off); }
-static uint8_t rd8(Pc *pc, uint16_t off) { return cpu_read8(&pc->cpu, cpu_linear(pc->cpu.sregs[S_DS], off)); }
-static void wr16(Pc *pc, uint16_t off, int v) { mem_write16(pc, pc->cpu.sregs[S_DS], off, (uint16_t)v); }
-static void wr8(Pc *pc, uint16_t off, uint8_t v) { cpu_write8(&pc->cpu, cpu_linear(pc->cpu.sregs[S_DS], off), v); }
 static void stack_write(Pc *pc, uint16_t sp, uint16_t v) { mem_write16(pc, pc->cpu.sregs[S_SS], sp, v); }
 
 /* ---- cycles (cpu8086.c model) ------------------------------------------------------ */
@@ -180,7 +110,7 @@ static FxSincos call_sincos(Pc *pc, uint16_t sp, uint16_t ret_ip, uint16_t angle
  * is turned around, bank and heading + 180 degrees. Returns DX as the original leaves it. */
 static uint16_t loop_over(Pc *pc, uint32_t *cyc)
 {
-    uint16_t pitch = rd16(pc, V_PITCH);
+    uint16_t pitch = (uint16_t)gs_pitch(pc);
     *cyc += 28 + 20;
     if (!(pitch & 0xC000)) {
         *cyc += JCC_TAKEN;
@@ -188,9 +118,9 @@ static uint16_t loop_over(Pc *pc, uint32_t *cyc)
     }
     *cyc += 67;
     pitch = (uint16_t)(0x8000 - pitch);
-    wr16(pc, V_PITCH, pitch);
-    wr16(pc, V_BANK, rd16(pc, V_BANK) + 0x8000);
-    wr16(pc, V_HEADING, rd16(pc, V_HEADING) + 0x8000);
+    gs_set_pitch(pc, pitch);
+    gs_set_bank(pc, rd16(pc, GS_BANK) + 0x8000);
+    gs_set_heading(pc, rd16(pc, GS_HEADING) + 0x8000);
     return pitch;
 }
 
@@ -212,11 +142,11 @@ static void n_fix_loop_over(Pc *pc)
  * wing only. Leaves AX = left offset, DX = right offset. */
 static void wing_cl_offsets(Pc *pc)
 {
-    uint16_t both = (uint16_t)(rd16(pc, V_FLAPS_CL) + rd16(pc, K_CL0));
-    uint16_t left = (uint16_t)(both + rd16(pc, V_AILERON_CL) + rd16(pc, V_SLIP_CL));
-    uint16_t right = (uint16_t)(both - rd16(pc, V_AILERON_CL));
-    wr16(pc, V_CL_OFS_LEFT, left);
-    wr16(pc, V_CL_OFS_RIGHT, right);
+    uint16_t both = (uint16_t)((uint16_t)gs_flaps_cl(pc) + gs_cl0(pc));
+    uint16_t left = (uint16_t)(both + (uint16_t)gs_aileron_cl(pc) + (uint16_t)gs_slip_cl(pc));
+    uint16_t right = (uint16_t)(both - (uint16_t)gs_aileron_cl(pc));
+    gs_set_cl_ofs_left(pc, left);
+    gs_set_cl_ofs_right(pc, right);
     pc->cpu.regs[R_AX] = left;
     pc->cpu.regs[R_DX] = right;
 }
@@ -232,12 +162,12 @@ static void n_wing_cl_offsets(Pc *pc)
  * aileron/2 - rudder/2. Then the wing offsets are recomputed. */
 static void n_control_coupling(Pc *pc)
 {
-    int16_t cross = (int16_t)(((int16_t)rd16(pc, V_AILERON) >> 1) - ((int16_t)rd16(pc, V_RUDDER) >> 1));
-    wr16(pc, V_CROSS_CONTROL, cross);
-    wr16(pc, V_SLIP_DRAG, mul_hi(cross, rds(pc, K_SLIP_DRAG)));
-    wr16(pc, V_SLIP_YAW, mul_hi(rds(pc, K_SLIP_YAW), cross));
-    wr16(pc, V_SLIP_ROLL, mul_hi(rds(pc, K_SLIP_ROLL), cross));
-    wr16(pc, V_SLIP_CL, mul_hi(rds(pc, K_SLIP_CL), cross));
+    int16_t cross = (int16_t)(((int16_t)(uint16_t)gs_aileron(pc) >> 1) - ((int16_t)(uint16_t)gs_rudder(pc) >> 1));
+    gs_set_cross_control(pc, cross);
+    gs_set_slip_drag(pc, mul_hi(cross, rds(pc, K_SLIP_DRAG)));
+    gs_set_slip_yaw(pc, mul_hi(rds(pc, K_SLIP_YAW), cross));
+    gs_set_crab_b(pc, mul_hi(rds(pc, K_SLIP_ROLL), cross));
+    gs_set_slip_cl(pc, mul_hi(rds(pc, K_SLIP_CL), cross));
     wing_cl_offsets(pc);
     native_ret(pc);
 }
@@ -255,7 +185,7 @@ static void n_flight_forces(Pc *pc)
 {
     Cpu8086 *c = &pc->cpu;
     uint32_t cyc = 34;
-    uint8_t frozen = rd8(pc, V_PAUSED) | rd8(pc, V_SLEW_MODE);
+    uint8_t frozen = gs_paused(pc) | gs_slew_mode(pc);
     if (frozen) {
         c->regs[R_AX] = (uint16_t)((c->regs[R_AX] & 0xFF00) | frozen);
         native_ret(pc);
@@ -266,14 +196,14 @@ static void n_flight_forces(Pc *pc)
 
     /* Attitude. */
     cyc += 295;
-    FxSincos tp = call_sincos(pc, sp, 0x1621, rd16(pc, V_PITCH), &cyc);
+    FxSincos tp = call_sincos(pc, sp, 0x1621, (uint16_t)gs_pitch(pc), &cyc);
     int16_t sin_pitch = (int16_t)tp.ax, cos_pitch = (int16_t)tp.cx;
-    FxSincos tb = call_sincos(pc, sp, 0x162F, rd16(pc, V_BANK), &cyc);
+    FxSincos tb = call_sincos(pc, sp, 0x162F, (uint16_t)gs_bank(pc), &cyc);
     int16_t sin_bank = (int16_t)tb.ax, cos_bank = (int16_t)tb.cx;
-    wr16(pc, V_SIN_PITCH, sin_pitch);
-    wr16(pc, V_COS_PITCH, cos_pitch);
-    wr16(pc, V_SIN_BANK, sin_bank);
-    wr16(pc, V_COS_BANK, cos_bank);
+    gs_set_sin_pitch(pc, sin_pitch);
+    gs_set_cos_pitch(pc, cos_pitch);
+    gs_set_crab_a(pc, sin_bank);
+    gs_set_cos_bank(pc, cos_bank);
 
     /* cos^2(bank), keeping the sign of cos: the share of lift that holds the aircraft up
      * (negative when inverted). */
@@ -284,11 +214,11 @@ static void n_flight_forces(Pc *pc)
     } else {
         cyc += JCC_TAKEN;
     }
-    wr16(pc, V_COS2_BANK, cos2_bank);
+    gs_set_cos2_bank(pc, cos2_bank);
 
     /* Angle of attack: elevator term times airspeed, the airspeed capped at 1E00h. The cap
      * tests the sign of AH - 1Eh, so AH = 9Fh..FFh (never reached) also pass uncapped. */
-    uint16_t airspeed = rd16(pc, V_AIRSPEED);
+    uint16_t airspeed = gs_airspeed(pc);
     int16_t v_aoa = (int16_t)airspeed;
     cyc += 40;
     if ((uint8_t)((airspeed >> 8) - 0x1E) & 0x80) {
@@ -297,25 +227,25 @@ static void n_flight_forces(Pc *pc)
         v_aoa = 0x1E00;
         cyc += 4;
     }
-    int16_t aoa = mul_shl(v_aoa, rds(pc, V_ELEV_AOA), 3);
-    wr16(pc, V_AOA, aoa);
+    int16_t aoa = mul_shl(v_aoa, gs_elev_aoa(pc), 3);
+    gs_set_angle_of_attack(pc, aoa);
 
     /* Lift coefficient of each wing: AoA times the lift slope, plus the flaps, aileron and
      * slip offsets. A shot-off left wing has none. */
     cyc += 471;
-    int16_t cl_aoa = mul_shl(aoa, rds(pc, K_LIFT_SLOPE), 1);
-    wr16(pc, V_CL_AOA, cl_aoa);
-    int16_t cl_left = (int16_t)(cl_aoa + rds(pc, V_CL_OFS_LEFT));
-    wr16(pc, V_CL_LEFT, cl_left);
-    if (rd8(pc, V_WING_DAMAGE) == 1) {
+    int16_t cl_aoa = mul_shl(aoa, gs_lift_slope(pc), 1);
+    gs_set_cl_aoa(pc, cl_aoa);
+    int16_t cl_left = (int16_t)(cl_aoa + gs_cl_ofs_left(pc));
+    gs_set_cl_left(pc, cl_left);
+    if (gs_wing_damage(pc) == 1) {
         cl_left = 0;
-        wr16(pc, V_CL_LEFT, 0);
+        gs_set_cl_left(pc, 0);
         cyc += 17;
     } else {
         cyc += JCC_TAKEN;
     }
-    int16_t cl_right = (int16_t)(cl_aoa + rds(pc, V_CL_OFS_RIGHT));
-    wr16(pc, V_CL_RIGHT, cl_right);
+    int16_t cl_right = (int16_t)(cl_aoa + gs_cl_ofs_right(pc));
+    gs_set_cl_right(pc, cl_right);
 
     /* Stall: past either AoA limit both wings lose their lift and the stall horn sounds. */
     cyc += 69;
@@ -331,88 +261,88 @@ static void n_flight_forces(Pc *pc)
     if (stalled) {
         cyc += 93;
         cl_left = cl_right = 0;
-        wr16(pc, V_CL_RIGHT, 0);
-        wr16(pc, V_CL_LEFT, 0);
-        wr8(pc, V_SOUND_STATE, 1);
-        wr8(pc, V_STALLED, 1);
+        gs_set_cl_right(pc, 0);
+        gs_set_cl_left(pc, 0);
+        gs_set_sound_state(pc, 1);
+        gs_set_stalled(pc, 1);
     } else {
         cyc += 19;
-        wr8(pc, V_STALLED, 0);
+        gs_set_stalled(pc, 0);
     }
 
     /* Lift = V^2 * (CL_left + CL_right) * air density. The difference between the wings
      * is the roll moment. */
     cyc += 2338;
     int16_t v_sq = (int16_t)((((uint32_t)airspeed * airspeed) << 1) >> 16); /* MUL: unsigned */
-    wr16(pc, V_SQ_V, v_sq);
+    gs_set_airspeed_sq(pc, v_sq);
     int16_t lift_left = mul_shl(v_sq, cl_left, 3);
     int16_t lift_right = mul_shl(v_sq, cl_right, 3);
-    wr16(pc, V_LIFT_LEFT, lift_left);
-    wr16(pc, V_LIFT_RIGHT, lift_right);
-    int16_t lift = mul_shl((int16_t)(lift_left + lift_right), rds(pc, V_AIR_DENSITY), 1);
-    wr16(pc, V_LIFT, lift);
-    wr16(pc, V_ROLL_MOMENT, (uint16_t)((lift_left - lift_right) << 2));
+    gs_set_lift_left(pc, lift_left);
+    gs_set_lift_right(pc, lift_right);
+    int16_t lift = mul_shl((int16_t)(lift_left + lift_right), (int16_t)gs_air_density(pc), 1);
+    gs_set_lift(pc, lift);
+    gs_set_roll_moment(pc, (uint16_t)((lift_left - lift_right) << 2));
 
     /* Weight split along and across the flight path. */
-    int16_t weight = rds(pc, V_WEIGHT);
+    int16_t weight = (int16_t)gs_weight(pc);
     int16_t weight_along = mul_shl(sin_pitch, weight, 1);
     int16_t weight_normal = mul_shl(cos_pitch, weight, 1);
-    wr16(pc, V_WEIGHT_ALONG, weight_along);
-    wr16(pc, V_WEIGHT_NORMAL, weight_normal);
+    gs_set_weight_along(pc, weight_along);
+    gs_set_weight_normal(pc, weight_normal);
 
     /* Net force across the flight path: the vertical share of lift minus the weight. */
     int16_t normal_force = (int16_t)(mul_shl(cos2_bank, lift, 1) - weight_normal);
-    wr16(pc, V_NORMAL_FORCE, normal_force);
+    gs_set_normal_force(pc, normal_force);
 
     /* Drag = (CL_left^2 + CL_right^2 + slip + flaps) * scale + gear, times V^2, plus the
      * weight along the path (gravity) and, while moving, a constant friction term. */
     int16_t cl2_left = mul_shl(cl_left, cl_left, 1);
     int16_t cl2_right = mul_shl(cl_right, cl_right, 1);
-    wr16(pc, V_CL2_LEFT, cl2_left);
-    wr16(pc, V_CL2_RIGHT, cl2_right);
-    int16_t drag_coef = (int16_t)(cl2_left + cl2_right + rds(pc, V_SLIP_DRAG) + rds(pc, V_FLAPS_DRAG));
-    wr16(pc, V_DRAG_COEF, drag_coef);
-    int16_t drag_scaled = mul_shl(drag_coef, rds(pc, K_DRAG_SCALE), 1);
-    wr16(pc, V_DRAG_SCALED, drag_scaled);
-    int16_t drag_total = (int16_t)(drag_scaled + rds(pc, V_GEAR_DRAG));
-    wr16(pc, V_DRAG_TOTAL, drag_total);
+    gs_set_cl2_left(pc, cl2_left);
+    gs_set_cl2_right(pc, cl2_right);
+    int16_t drag_coef = (int16_t)(cl2_left + cl2_right + gs_slip_drag(pc) + gs_flaps_drag(pc));
+    gs_set_drag_coef(pc, drag_coef);
+    int16_t drag_scaled = mul_shl(drag_coef, gs_drag_scale(pc), 1);
+    gs_set_drag_scaled(pc, drag_scaled);
+    int16_t drag_total = (int16_t)(drag_scaled + gs_gear_drag(pc));
+    gs_set_drag_total(pc, drag_total);
     int16_t drag = (int16_t)(mul_shl(drag_total, v_sq, 1) + weight_along);
     if (airspeed != 0) {
-        drag = (int16_t)(drag + rds(pc, K_FRICTION));
+        drag = (int16_t)(drag + gs_friction(pc));
         cyc += 18;
     } else {
         cyc += JCC_TAKEN;
     }
-    wr16(pc, V_DRAG, drag);
+    gs_set_drag(pc, drag);
 
     /* Acceleration along the path = (thrust - drag) / mass. */
     cyc += 274;
-    int16_t net_force = (int16_t)(rds(pc, V_THRUST) - drag);
-    wr16(pc, V_NET_FORCE, net_force);
-    int16_t accel = mul_hi(rds(pc, V_INV_MASS), net_force);
-    wr16(pc, V_ACCEL, accel);
+    int16_t net_force = (int16_t)(gs_thrust(pc) - drag);
+    gs_set_net_force(pc, net_force);
+    int16_t accel = mul_hi((int16_t)gs_inv_mass(pc), net_force);
+    gs_set_accel(pc, accel);
 
     /* 1/V for the rates: div_q15(0280:0000, V), saturating at low speed. */
     stack_write(pc, (uint16_t)(sp - 2), 0x17E5);
     cyc += div_q15_pos_cycles(airspeed);
     int16_t inv_v = fx_div_q15(0x02800000, (int16_t)airspeed);
     uint16_t cx_out = (airspeed & 0x8000) ? (uint16_t)-airspeed : airspeed; /* div_q15 leaves |CX| */
-    wr16(pc, V_INV_V, inv_v);
+    gs_set_inv_airspeed(pc, inv_v);
 
     /* Pitch acceleration = normal force / V. */
     cyc += 1059;
     int16_t pitch_accel = mul_shl(inv_v, normal_force, 1);
-    wr16(pc, V_PITCH_ACCEL, pitch_accel);
+    gs_set_pitch_accel(pc, pitch_accel);
 
     /* Turn rate = horizontal lift (lift * sin(bank)) / V, plus the slip yaw * V. On the
      * ground while rolling, the rudder steers the nosewheel instead. */
     int16_t lift_horiz = mul_shl(sin_bank, lift, 1);
-    wr16(pc, V_LIFT_HORIZ, lift_horiz);
-    int16_t turn = mul_shl(rds(pc, K_TURN_GAIN), mul_shl(inv_v, lift_horiz, 6), 1);
+    gs_set_lift_horiz(pc, lift_horiz);
+    int16_t turn = mul_shl(gs_turn_gain(pc), mul_shl(inv_v, lift_horiz, 6), 1);
     stack_write(pc, (uint16_t)(sp - 2), (uint16_t)turn); /* PUSH DX */
-    turn = (int16_t)(turn + mul_shl((int16_t)airspeed, rds(pc, V_SLIP_YAW), 3));
-    wr16(pc, V_TURN_RATE, turn);
-    bool on_ground = rd8(pc, V_ON_GROUND) != 0;
+    turn = (int16_t)(turn + mul_shl((int16_t)airspeed, gs_slip_yaw(pc), 3));
+    gs_set_turn_rate(pc, turn);
+    bool on_ground = gs_on_ground(pc) != 0;
     if (!on_ground) {
         cyc += JCC_TAKEN;
     } else {
@@ -421,14 +351,14 @@ static void n_flight_forces(Pc *pc)
             cyc += JCC_TAKEN;
         } else {
             cyc += 48;
-            wr16(pc, V_TURN_RATE, rds(pc, V_RUDDER) >> 3);
+            gs_set_turn_rate(pc, rds(pc, GS_RUDDER) >> 3);
         }
     }
 
     /* Pitch rate; on the ground the nose cannot be pushed into the runway. */
     cyc += 216;
-    int16_t pitch_rate = mul_shl(rds(pc, V_PITCH_GAIN), pitch_accel, 1);
-    wr16(pc, V_PITCH_RATE, pitch_rate);
+    int16_t pitch_rate = mul_shl((int16_t)gs_mass_term2(pc), pitch_accel, 1);
+    gs_set_pitch_rate(pc, pitch_rate);
     if (!on_ground) {
         cyc += JCC_TAKEN;
     } else {
@@ -438,7 +368,7 @@ static void n_flight_forces(Pc *pc)
         } else {
             cyc += 19;
             pitch_rate = 0;
-            wr16(pc, V_PITCH_RATE, 0);
+            gs_set_pitch_rate(pc, 0);
         }
     }
 
@@ -446,10 +376,10 @@ static void n_flight_forces(Pc *pc)
      * negative result stops the aircraft; an overflow or more than 6400h caps it at
      * 64xxh (the low byte is left from the increment). */
     cyc += 390;
-    int16_t acc_to_pitch = mul_mid(accel, rds(pc, K_ACCEL_TO_PITCH));
-    wr16(pc, V_ACC_TO_PITCH, acc_to_pitch);
-    int16_t pitch_to_v = mul_mid(pitch_rate, rds(pc, K_PITCH_TO_V));
-    wr16(pc, V_PITCH_FROM_ACC, pitch_to_v);
+    int16_t acc_to_pitch = mul_mid(accel, gs_accel_to_pitch_k(pc));
+    gs_set_accel_to_pitch(pc, acc_to_pitch);
+    int16_t pitch_to_v = mul_mid(pitch_rate, gs_pitch_to_v_k(pc));
+    gs_set_pitch_to_speed(pc, pitch_to_v);
     uint16_t dv = (uint16_t)(accel + pitch_to_v);
     int32_t v_new = (int16_t)airspeed + (int16_t)dv;
     bool overflow = v_new != (int16_t)v_new;
@@ -466,21 +396,21 @@ static void n_flight_forces(Pc *pc)
     } else {
         cyc += 4 + 23;
     }
-    wr16(pc, V_AIRSPEED, v16);
+    gs_set_airspeed(pc, v16);
 
     /* Integrate pitch, then fold a loop over the vertical (fix_loop_over works on a
      * positive pitch, so a negative one is negated around it). */
     cyc += 52;
     uint16_t pitch_step = (uint16_t)(pitch_rate + acc_to_pitch);
-    uint16_t pitch = (uint16_t)(rd16(pc, V_PITCH) + pitch_step);
-    wr16(pc, V_PITCH, pitch);
+    uint16_t pitch = (uint16_t)((uint16_t)gs_pitch(pc) + pitch_step);
+    gs_set_pitch(pc, pitch);
     uint16_t dx;
     if (pitch & 0x8000) {
         cyc += JCC_TAKEN + 45 + 20;
         stack_write(pc, (uint16_t)(sp - 2), 0x18F6);
-        wr16(pc, V_PITCH, (uint16_t)-pitch);
+        gs_set_pitch(pc, (uint16_t)-pitch);
         dx = loop_over(pc, &cyc);
-        wr16(pc, V_PITCH, (uint16_t)-rd16(pc, V_PITCH));
+        gs_set_pitch(pc, (uint16_t)-rd16(pc, GS_PITCH));
     } else {
         cyc += 38 + 20;
         stack_write(pc, (uint16_t)(sp - 2), 0x18CB);

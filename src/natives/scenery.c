@@ -22,6 +22,7 @@
 #include <stdbool.h>
 
 #include "native.h"
+#include "game/state.h"
 
 
 
@@ -319,21 +320,18 @@ static inline bool dec_m8(uint16_t o) /* dec byte [o]; result != 0 */
 
 /* ---- scenery_ip and points ------------------------------------------------------------------ */
 
-#define SCENERY_IP 0x30C2
-#define CAPTURE_MODE 0x30CA
-#define CAPTURE_PTR 0x30C6
 
 /* 0050:47E3: world_to_eye_delta (point at [BX+1]), scenery_ip = after the point, then 47EA:
  * rotate_point into point 1 (310F). */
 static void f_47E3(void)
 {
     call_ext(0x48E8, 0x47E6);
-    wr16(SCENERY_IP, rSI);
+    gs_set_scenery_ip(P, rSI);
     CY(MOV_MR);
     call_ext(0x481F, 0x47ED);
-    wr16(0x310F, rBX);
-    wr16(0x3111, rCX);
-    wr16(0x3113, rDX);
+    gs_set_eye_p1_w(P, 0, rBX);
+    gs_set_eye_p1_w(P, 1, rCX);
+    gs_set_eye_p1_w(P, 2, rDX);
     CY(3 * MOV_MR);
     ret_();
 }
@@ -350,15 +348,15 @@ static void f_47DD(void)
 static void f_47FA(void)
 {
     call_ext(0x48E8, 0x47FD);
-    wr16(SCENERY_IP, rSI);
+    gs_set_scenery_ip(P, rSI);
     CY(MOV_MR);
     call_ext(0x481F, 0x4804);
-    wr16(0x311B, rBX);
-    wr16(0x3127, rBX);
-    wr16(0x311D, rCX);
-    wr16(0x3129, rCX);
-    wr16(0x311F, rDX);
-    wr16(0x312B, rDX);
+    gs_set_eye_p2_w(P, 0, rBX);
+    gs_set_eye_p3_w(P, 0, rBX);
+    gs_set_eye_p2_w(P, 1, rCX);
+    gs_set_eye_p3_w(P, 1, rCX);
+    gs_set_eye_p2_w(P, 2, rDX);
+    gs_set_eye_p3_w(P, 2, rDX);
     CY(6 * MOV_MR);
     CY(JMP);
     ext(0x4A4E);
@@ -394,7 +392,7 @@ static uint8_t project_axis(uint16_t v_off, uint16_t z_off, uint16_t scale, uint
 /* 0050:4D56: point 2 projected; the line from SI (screen point 1) is drawn, or captured. */
 static void f_4D56(void)
 {
-    wr8(0x3163, 0);
+    gs_set_move_pending(P, 0);
     CY(MOV_MI);
     set_lo(&rCX, project_axis(0x311B, 0x311F, 0x3167, 0x3169, 0x4D69));
     CY(MOV_RR);
@@ -403,13 +401,13 @@ static void f_4D56(void)
     wr16(0x3165, rCX);
     CY(MOV_MR);
     CY(TEST_MI);
-    if (!J(rd8(CAPTURE_MODE) == 0)) {
-        rBX = rd16(CAPTURE_PTR);
+    if (!J(gs_capture_mode(P) == 0)) {
+        rBX = gs_capture_ptr(P);
         CY(MOV_RM);
         wr16(rBX, rSI);
         wr16((uint16_t)(rBX + 2), rCX);
         CY(2 * MOV_MR);
-        wr16(CAPTURE_PTR, (uint16_t)(rd16(CAPTURE_PTR) + 4));
+        gs_set_capture_ptr(P, (uint16_t)(rd16(GS_CAPTURE_PTR) + 4));
         CY(ALU_MI);
         ret_();
         return;
@@ -458,7 +456,7 @@ static void f_clip_project_line(void)
 {
     wr8(0x3164, 1);
     CY(MOV_MI);
-    rCX = rd16(0x315E);
+    rCX = rd16(GS_OUTCODE1);
     CY(MOV_RM);
     set_hi(&rCX, CH & CL);
     CY(ALU_RR);
@@ -467,15 +465,15 @@ static void f_clip_project_line(void)
     CY(ALU_RR);
     if (J(CL != 0))
         goto L40F3;
-    wr8(0x3162, 5);
+    gs_set_clip_steps(P, 5);
     CY(MOV_MI);
 L40DE:
-    set_hi(&rCX, rd8(0x315F));
+    set_hi(&rCX, gs_outcode2(P));
     CY(MOV_RM + ALU_RR);
     if (J(CH != 0))
         goto L410F;
     CY(TEST_MI);
-    if (J(rd8(0x3163) & 1)) {
+    if (J(gs_move_pending(P) & 1)) {
         CY(JMP);
         f_4D18();
         return;
@@ -484,11 +482,11 @@ L40DE:
     f_4CA3();
     return;
 L40F3:
-    wr8(0x3162, 0x0A);
+    gs_set_clip_steps(P, 0x0A);
     CY(MOV_MI);
 L40F8:
     call_ext(0x4AF7, 0x40FB); /* clip_p1_plane */
-    rCX = rd16(0x315E);
+    rCX = rd16(GS_OUTCODE1);
     CY(MOV_RM + ALU_RR);
     if (J(CL == 0))
         goto L411B;
@@ -507,7 +505,7 @@ L410F:
     CY(JMP);
     goto L412F;
 L411B:
-    set_hi(&rCX, rd8(0x315F));
+    set_hi(&rCX, gs_outcode2(P));
     CY(MOV_RM + ALU_RR);
     if (!J(CH != 0)) {
         CY(JMP);
@@ -518,7 +516,7 @@ L411B:
     if (J(dec_m8(0x3162)))
         goto L411B;
 L412F:
-    wr8(0x3163, 0);
+    gs_set_move_pending(P, 0);
     CY(MOV_MI);
     ret_();
 }
@@ -542,14 +540,14 @@ static void h_move(void)
     }
     mov_al_m(0x315E);
     mov_m_al(0x3161);
-    wr8(0x3163, 1); /* L3DA9 */
+    gs_set_move_pending(P, 1); /* L3DA9 */
     CY(MOV_MI);
     ret_();
 }
 
 static void h_move_flat(void)
 {
-    wr8(0x315D, (uint8_t)(rd8(0x315D) + 1));
+    gs_set_flat_flag(P, (uint8_t)(gs_flat_flag(P) + 1));
     CY(INC_M);
     h_move();
 }
@@ -558,7 +556,7 @@ static void h_move_flat(void)
 static void line_continue(void)
 {
     CY(TEST_MI);
-    if (J(rd8(0x3163) != 0))
+    if (J(gs_move_pending(P) != 0))
         return;
     for (uint16_t i = 0; i < 6; i += 2) {
         mov_ax_m((uint16_t)(0x3127 + i));
@@ -580,7 +578,7 @@ static void h_line(void)
 
 static void h_line_flat(void)
 {
-    wr8(0x315D, (uint8_t)(rd8(0x315D) + 1));
+    gs_set_flat_flag(P, (uint8_t)(gs_flat_flag(P) + 1));
     CY(INC_M);
     h_line();
 }
@@ -659,11 +657,11 @@ static void h_capture(void)
     rAX = rd16((uint16_t)(rBX + 1));
     CY(MOV_RM + ALU_RR);
     if (!J(rAX == 0)) {
-        wr8(CAPTURE_MODE, 0xFF);
+        gs_set_capture_mode(P, 0xFF);
         CY(MOV_MI);
-        mov_m_ax(CAPTURE_PTR);
+        mov_m_ax(GS_CAPTURE_PTR);
     } else {
-        wr8(CAPTURE_MODE, 0);
+        gs_set_capture_mode(P, 0);
         CY(MOV_MI);
     }
     add_ip(3);
@@ -679,7 +677,7 @@ static void h_proj_scale(void)
     mov_m_ax(0x3167);
     rCX = rd16((uint16_t)(rBX + 3));
     CY(MOV_RM + ALU_RI);
-    wr16(0x3169, rCX);
+    gs_set_proj_params_w(P, 1, rCX);
     CY(MOV_MR);
     add_ip(5);
     CY(ALU_MI);
@@ -722,7 +720,7 @@ static void h_colour(void)
 static void colour_if(uint16_t mask)
 {
     CY(TEST_MI);
-    if (!J((rd16(0x0412) & mask) == 0)) {
+    if (!J((gs_time_of_day(P) & mask) == 0)) {
         rAX = rd16((uint16_t)(rBX + 1));
         CY(MOV_RM);
         mov_m_ax(0x30C8);
@@ -745,7 +743,7 @@ static void colour_dark(uint16_t colour)
 {
     rAX = colour;
     CY(MOV_RI + TEST_MI);
-    if (!J((rd16(0x0412) & 6) == 0))
+    if (!J((gs_time_of_day(P) & 6) == 0))
         mov_m_ax(0x30C8);
     inc_ip();
     ret_();
@@ -912,7 +910,7 @@ static void origin_axis(uint16_t pos, uint16_t org, uint16_t eye, uint16_t ret)
     rAX = (uint16_t)v;
     rDX = (uint16_t)(v >> 16);
     CY(2 * ALU_RM);
-    rDI = rd16(0x30DD);
+    rDI = rd16(GS_SCENERY_SCALE);
     CY(MOV_RM);
     call_int(ret, shift_405F);
     mov_m_ax(eye);
@@ -930,7 +928,7 @@ static void h_origin(void)
         lodsw_();
         mov_m_ax((uint16_t)(0x30DF + i));
     }
-    wr16(SCENERY_IP, rSI);
+    gs_set_scenery_ip(P, rSI);
     CY(MOV_MR);
     origin_axis(0x30D1, 0x30DF, 0x30EB, 0x4029);
     origin_axis(0x30D5, 0x30E3, 0x30ED, 0x4042);
@@ -959,7 +957,7 @@ static void f_416D(void)
     call_int(0x4170, f_415C);
     rBX++;
     CY(INC_R);
-    wr16(SCENERY_IP, rBX);
+    gs_set_scenery_ip(P, rBX);
     CY(MOV_MR);
     rSI = rBP;
     CY(MOV_RR);
@@ -998,7 +996,7 @@ static void h_move_cached(void)
     lodsb_();
     mov_m_al(0x315E);
     CY(JMP);
-    wr8(0x3163, 1); /* L3DA9 */
+    gs_set_move_pending(P, 1); /* L3DA9 */
     CY(MOV_MI);
     ret_();
 }
@@ -1057,7 +1055,7 @@ static void f_4234(void)
 {
     bool cf;
     lodsw_();
-    uint16_t a = rAX, b = rd16(0x30EB);
+    uint16_t a = rAX, b = gs_eye_pos_w(P, 0);
     rAX = (uint16_t)(a - b);
     CY(ALU_RM);
     if (J(((a ^ b) & (a ^ rAX)) & 0x8000)) { /* L41E0: x overflow */
@@ -1067,7 +1065,7 @@ static void f_4234(void)
         rBX = rAX;
         CY(FLAG_OP + 3 * SH1_R + MOV_RR);
         lodsw_();
-        rDX = sar1(rd16(0x30ED));
+        rDX = sar1(gs_eye_pos_w(P, 1));
         rAX = sar1(rAX);
         rAX = (uint16_t)(rAX - rDX);
         rAX = sar1(sar1(rAX));
@@ -1079,7 +1077,7 @@ static void f_4234(void)
     CY(MOV_RR);
     lodsw_();
     a = rAX;
-    b = rd16(0x30ED);
+    b = gs_eye_pos_w(P, 1);
     rAX = (uint16_t)(a - b);
     CY(ALU_RM);
     if (J(((a ^ b) & (a ^ rAX)) & 0x8000)) { /* L41FC: y overflow */
@@ -1095,7 +1093,7 @@ static void f_4234(void)
     CY(MOV_RR);
     lodsw_();
     a = rAX;
-    b = rd16(0x30EF);
+    b = gs_eye_pos_w(P, 2);
     rAX = (uint16_t)(a - b);
     CY(ALU_RM);
     if (J(((a ^ b) & (a ^ rAX)) & 0x8000)) { /* L421E: z overflow */
@@ -1131,7 +1129,7 @@ static void f_4234(void)
     }
 L420B:
     lodsw_();
-    rDX = sar1(rd16(0x30EF));
+    rDX = sar1(gs_eye_pos_w(P, 2));
     rAX = sar1(rAX);
     rAX = (uint16_t)(rAX - rDX);
     rAX = sar1(sar1(rAX));
@@ -1140,8 +1138,8 @@ L420B:
 L4275:
     wr8(0x3180, (uint8_t)(rd8(0x3180) << 1 | cf)); /* rcl byte [3180],1 */
     CY(SH1_M);
-    wr16(0x3139, rBX);
-    wr16(0x313B, rCX);
+    gs_set_xform_in_w(P, 0, rBX);
+    gs_set_xform_in_w(P, 1, rCX);
     CY(2 * MOV_MR);
     mov_m_ax(0x313D);
     /* row x: imul [30FD], [3103], [3109] */
@@ -1333,18 +1331,18 @@ static void h_dashed(void)
     for (bool first = true;; first = false) {
         if (!first)
             call_int(0x44C8, f_4428);
-        wr16(0x310F, rBX);
-        wr16(0x3111, rCX);
-        wr16(0x3113, rBP);
+        gs_set_eye_p1_w(P, 0, rBX);
+        gs_set_eye_p1_w(P, 1, rCX);
+        gs_set_eye_p1_w(P, 2, rBP);
         CY(3 * MOV_MR);
         call_ext(0x4A1A, 0x44D7); /* outcode_p1 */
         call_int(0x44DA, f_4428);
-        wr16(0x311B, rBX);
-        wr16(0x311D, rCX);
-        wr16(0x311F, rBP);
+        gs_set_eye_p2_w(P, 0, rBX);
+        gs_set_eye_p2_w(P, 1, rCX);
+        gs_set_eye_p2_w(P, 2, rBP);
         CY(3 * MOV_MR);
         call_ext(0x4A4E, 0x44E9); /* outcode_p2 */
-        wr8(0x3163, 1);
+        gs_set_move_pending(P, 1);
         CY(MOV_MI);
         push(sDS);
         CY(PUSH_S);
@@ -1380,8 +1378,8 @@ static void h_dotted(void)
 /* 2F poly_begin (44FB) */
 static void h_poly_begin(void)
 {
-    wr8(0x31D0, 1);
-    wr16(0x3730, 0);
+    gs_set_poly_mode(P, 1);
+    gs_set_poly_edges_w(P, 0, 0);
     wr16(0x3734, 0);
     wr16(0x3736, 0);
     CY(4 * MOV_MI);
@@ -1392,8 +1390,8 @@ static void h_poly_begin(void)
 /* 0050:59B7: span fill from BX (ES = DS = back buffer): replaces [31CE] by [3159] */
 static void f_span_fill(void)
 {
-    rDX = rd16(0x31CE);
-    rCX = rd16(0x3159);
+    rDX = gs_fill_pattern(P);
+    rCX = gs_colour_byte(P);
     CY(2 * MOV_RM);
     push(sDS);
     CY(PUSH_S);
@@ -1540,7 +1538,7 @@ static void f_poly_fill(void)
     rBP = 0xFFFF;
     rDX = 0x7FFF;
     CY(2 * MOV_RI);
-    sES = rd16(0x3806);
+    sES = gs_view_buf_seg(P);
     CY(MOV_SM);
     /* 54A5: drop duplicate seed pixels and plot the seeds */
     for (;;) {
@@ -1765,7 +1763,7 @@ static void f_poly_fill(void)
     for (;;) { /* L55B0 */
         rDI = rd16((uint16_t)(rBX + 0x3734));
         rBX = (uint16_t)(rBX + 4);
-        rDX = rd16(0x31CE);
+        rDX = gs_fill_pattern(P);
         CY(MOV_RM + ALU_RI + MOV_RM + ALU_RR);
         if (!J(!neg16(rDI))) {
             CY(ALU_RR);
@@ -1818,9 +1816,9 @@ static void f_poly_fill(void)
 /* 2D poly_end (5468) */
 static void h_poly_end(void)
 {
-    wr8(0x31D0, 0);
+    gs_set_poly_mode(P, 0);
     CY(MOV_MI);
-    rBX = rd16(0x3730);
+    rBX = gs_poly_edges_w(P, 0);
     CY(MOV_RM);
     wr16((uint16_t)(rBX + 0x3734), 0);
     wr16((uint16_t)(rBX + 0x3736), 0);
@@ -1831,9 +1829,9 @@ static void h_poly_end(void)
     CY(MOV_MR);
     inc_ip();
     CY(TEST_MI);
-    if (!J((rd16(0x0412) & 1) == 0)) {
+    if (!J((gs_time_of_day(P) & 1) == 0)) {
         CY(ALU_MI);
-        if (!J(rd8(0x0405) == 1))
+        if (!J(gs_radar_view(P) == 1))
             call_int(0x549A, f_poly_fill);
     }
     ret_();
@@ -1848,7 +1846,7 @@ static void h_demo_script(void)
     CY(MOV_RM);
     rBX = (uint16_t)(rBX + 3);
     CY(ALU_RI);
-    wr16(0x31E8, rBX);
+    gs_set_demo_script(P, rBX);
     CY(MOV_MR);
     add_ip(rAX);
     CY(ALU_RM);
@@ -1858,7 +1856,7 @@ static void h_demo_script(void)
 /* 18 call (4517) */
 static void h_call(void)
 {
-    mov_ax_m(SCENERY_IP);
+    mov_ax_m(GS_SCENERY_IP);
     rAX = (uint16_t)(rAX + 3);
     CY(ALU_AI);
     mov_m_ax(0x31D1);
@@ -1870,7 +1868,7 @@ static void h_call(void)
 static void h_return(void)
 {
     mov_ax_m(0x31D1);
-    mov_m_ax(SCENERY_IP);
+    mov_m_ax(GS_SCENERY_IP);
     ret_();
 }
 
@@ -1894,7 +1892,7 @@ static void h_nav_station(void)
 {
     CY(ALU_MI);
     if (!J(rd8(0x31D4) == 0)) {
-        wr8(0x31D3, 0);
+        gs_set_nav_search(P, 0);
         CY(MOV_MI);
         mov_ax_m(0x03FF);
         CY(ALU_RM);
@@ -1907,7 +1905,7 @@ static void h_nav_station(void)
                 rSI--;
                 CY(MOV_RM + MOV_MR + INC_R);
             } while (J(!neg16(rSI)));
-            wr8(0x31D5, 1);
+            gs_set_nav_found(P, 1);
             CY(MOV_MI);
         }
     }
@@ -1923,7 +1921,7 @@ static void h_com_station(void)
     rDX = rd16((uint16_t)(rBX + 1));
     CY(MOV_RM + ALU_MI);
     if (!J(rd8(0x31DF) == 0)) {
-        wr8(0x31DE, 0);
+        gs_set_com_search(P, 0);
         CY(MOV_MI);
         mov_ax_m(0x03F2);
         CY(ALU_RM);
@@ -1941,9 +1939,9 @@ static void h_com_station(void)
                 set_lo(&rCX, (uint8_t)(CL - 1));
                 CY(MOV_RM + MOV_MR + 2 * INC_R + INC_R8);
             } while (J(CL != 0));
-            wr16(0x3626, rBX);
+            gs_set_atis_ptr(P, rBX);
             CY(MOV_MR);
-            wr8(0x3628, 0);
+            gs_set_atis_idle(P, 0);
             CY(MOV_MI);
             push(rDX);
             CY(PUSH_R);
@@ -2026,7 +2024,7 @@ static void f_interp(void)
     mov_al_m(0x31DE);
     mov_m_al(0x31DF);
     for (;;) { /* L3CD5 */
-        rBX = rd16(SCENERY_IP);
+        rBX = gs_scenery_ip(P);
         set_lo(&rAX, rd8(rBX));
         CY(2 * MOV_RM + ALU_AI);
         if (J(AL == 0x79))
@@ -2051,8 +2049,8 @@ static void f_interp(void)
         CY(MOV_SM + JMP);
     }
     CY(TEST_MI); /* L3CFC */
-    if (!J(rd8(CAPTURE_MODE) == 0)) {
-        rBX = rd16(CAPTURE_PTR);
+    if (!J(gs_capture_mode(P) == 0)) {
+        rBX = gs_capture_ptr(P);
         CY(MOV_RM);
         wr8(rBX, 0xFF);
         CY(MOV_MI);
@@ -2071,20 +2069,20 @@ static void f_interp(void)
 static void f_draw_scenery(void)
 {
     CY(TEST_MI);
-    if (!J(rd8(0x0405) != 0)) {
+    if (!J(gs_radar_view(P) != 0)) {
         call_int(0x0467, f_interp);
         mov_ax_m(0x30D5);
-        rDX = rd16(0x30D7);
+        rDX = rd16((uint16_t)(GS_ALTITUDE + 2));
         CY(MOV_RM);
         uint32_t v = ((uint32_t)rDX << 16 | rAX) - 0x400;
         rAX = (uint16_t)v;
         rDX = (uint16_t)(v >> 16);
         CY(ALU_AI + ALU_RI);
         if (!J(!neg16(rDX))) {
-            sES = rd16(0x3806);
+            sES = gs_view_buf_seg(P);
             CY(MOV_SM + ALU_MI);
             if (!J(mem_read16(P, sES, 0x3068) != 0x2222)) {
-                wr8(0x03F4, 8);
+                gs_set_crash_code(P, 8);
                 CY(MOV_MI);
             }
         }
@@ -2092,22 +2090,22 @@ static void f_draw_scenery(void)
         return;
     }
     mov_ax_m(0x0586); /* L0489 */
-    uint16_t t = rd16(0x30D5);
-    wr16(0x30D5, rAX);
+    uint16_t t = rd16(GS_ALTITUDE);
+    wr16(GS_ALTITUDE, rAX);
     rAX = t;
     CY(XCHG_RM);
     push(rAX);
     CY(PUSH_R);
     mov_ax_m(0x0588);
-    t = rd16(0x30D7);
-    wr16(0x30D7, rAX);
+    t = rd16((uint16_t)(GS_ALTITUDE + 2));
+    wr16((uint16_t)(GS_ALTITUDE + 2), rAX);
     rAX = t;
     CY(XCHG_RM);
     push(rAX);
     CY(PUSH_R);
     call_int(0x049C, f_interp);
-    wr16(0x30D7, pop());
-    wr16(0x30D5, pop());
+    wr16((uint16_t)(GS_ALTITUDE + 2), pop());
+    wr16(GS_ALTITUDE, pop());
     CY(2 * POP_M);
     ret_();
 }
@@ -2116,8 +2114,8 @@ static void f_draw_scenery(void)
 static void f_scenery_reset_ip(void)
 {
     mov_ax_m(0x03F0);
-    mov_m_ax(SCENERY_IP);
-    wr8(CAPTURE_MODE, 0);
+    mov_m_ax(GS_SCENERY_IP);
+    gs_set_capture_mode(P, 0);
     CY(MOV_MI);
     ret_();
 }

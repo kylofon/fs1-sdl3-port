@@ -1,5 +1,6 @@
 /* Natives for subphase 3.9 text and font (see docs/PHASE3_PLAN.md, docs/subphases/3.9.md). */
 #include "native.h"
+#include "game/state.h"
 #include "natives/textdraw.h"
 
 /* Displacements of the five font loads (disp16 of mov ax,[bx+disp]) in each loop. */
@@ -132,7 +133,7 @@ static void n_print_str_list(Pc *pc)
 static void n_clear_screen(Pc *pc)
 {
     Cpu8086 *c = &pc->cpu;
-    uint16_t es = mem_read16(pc, c->sregs[S_DS], 0x03C2);
+    uint16_t es = gs_screen_seg(pc);
     int step = 2 * df_dir(c);
     uint16_t di = 0;
     c->sregs[S_ES] = es;

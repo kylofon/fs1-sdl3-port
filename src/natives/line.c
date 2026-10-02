@@ -6,6 +6,7 @@
 #include <stdbool.h>
 
 #include "native.h"
+#include "game/state.h"
 #include "raster.h"
 
 /* ---- 8086 arithmetic as the original's conditional jumps see it -------------------- */
@@ -986,9 +987,8 @@ static void bus_call(void *ctx, uint16_t ret)
 static void draw_line_cpu(Pc *pc, uint16_t ret_sp)
 {
     Cpu8086 *c = &pc->cpu;
-    uint16_t ds = c->sregs[S_DS];
-    bool poly = cpu_read8(c, cpu_linear(ds, 0x31D0)) != 0;
-    Bus bus = { pc, mem_read16(pc, ds, 0x3806), mem_read16(pc, 0, 0x120), c->sregs[S_SS],
+    bool poly = gs_poly_mode(pc) != 0;
+    Bus bus = { pc, gs_view_buf_seg(pc), mem_read16(pc, 0, 0x120), c->sregs[S_SS],
                 (uint16_t)(ret_sp - 2) };
     RasterBus rb = { &bus, bus_buf_rd, bus_buf_wr, bus_dat_rd, bus_dat_wr, bus_call };
     RasterRegs r = { c->regs[R_AX], c->regs[R_BX], c->regs[R_CX], c->regs[R_DX],
@@ -1021,10 +1021,10 @@ static void n_draw_line_list(Pc *pc)
 {
     Cpu8086 *c = &pc->cpu;
     uint16_t sp = c->regs[R_SP];
-    mem_write16(pc, c->sregs[S_DS], 0x30C4, c->regs[R_AX]);
+    gs_set_line_list_ptr(pc, c->regs[R_AX]);
     for (;;) {
         uint16_t ds = c->sregs[S_DS];
-        uint16_t bx = mem_read16(pc, ds, 0x30C4);
+        uint16_t bx = gs_line_list_ptr(pc);
         uint16_t ax = mem_read16(pc, ds, bx);
         c->regs[R_AX] = ax;
         c->regs[R_BX] = bx;
@@ -1032,7 +1032,7 @@ static void n_draw_line_list(Pc *pc)
             break;
         uint16_t cx = mem_read16(pc, ds, (uint16_t)(bx + 2));
         c->regs[R_CX] = cx;
-        mem_write16(pc, ds, 0x30C4, (uint16_t)(mem_read16(pc, ds, 0x30C4) + 4));
+        gs_set_line_list_ptr(pc, (uint16_t)(gs_line_list_ptr(pc) + 4));
         c->regs[R_BX] = ax & 0xFF;
         c->regs[R_BP] = ax >> 8;
         c->regs[R_SI] = cx & 0xFF;
@@ -1043,8 +1043,7 @@ static void n_draw_line_list(Pc *pc)
         c->regs[R_AX] = 0;
         c->sregs[S_DS] = mem_read16(pc, 0, 0x120);
     }
-    uint16_t ds = c->sregs[S_DS];
-    mem_write16(pc, ds, 0x30C2, (uint16_t)(mem_read16(pc, ds, 0x30C2) + 1));
+    gs_set_scenery_ip(pc, (uint16_t)(gs_scenery_ip(pc) + 1));
     native_ret(pc);
 }
 

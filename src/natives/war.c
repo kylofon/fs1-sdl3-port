@@ -18,6 +18,7 @@
  * original code. That way print_str (3.9, not merged yet) runs as original today and as C
  * once its native exists. */
 #include "war.h"
+#include "game/state.h"
 
 #include <stddef.h>
 
@@ -146,41 +147,6 @@ static void war_call(Pc *pc, uint16_t target, uint16_t ret_ip)
 
 /* ---- game variables (DS = 0618) ----------------------------------------------------- */
 
-#define V_GROUND_SERVICE 0x0406 /* set by the scenery: 1 airport ramp, 2 war home field */
-#define V_RADAR_VIEW 0x0405
-#define V_SOUND_STATE 0x0548
-#define V_BOMB_STATE 0x0575
-#define V_VIEW_NOT_FWD 0x0599   /* nonzero: no gun sight, enemy marks or bullets drawn */
-#define V_AIRSPEED 0x08A8
-#define V_FRAME_COUNTER 0x03F6
-#define V_SCREEN_SEG 0x03C2
-#define V_DAMAGE 0x1DC8
-#define V_KILLS 0x1E50
-#define V_AMMO 0x1E51
-#define V_BOMB_SCORE 0x1E53    /* set by the scenery while over a target */
-#define V_EXPLOSION_COLOUR 0x1E55
-#define V_SCORE 0x1E57
-#define V_WAR_ACTIVE 0x1E59
-#define V_WAR_STATUS 0x1E5A    /* 0 peace, bit 0 = declare war (W or a bomb hit), 3 = at war */
-#define V_HITS 0x1E5C
-#define V_DELTA_EAST 0x1E6F    /* target - enemy, 24 bits each: 1E6F word + 1E71 byte */
-#define V_DELTA_ALT 0x1E72
-#define V_DELTA_NORTH 0x1E75
-#define V_ENEMY_FIRE 0x1E78
-#define V_IN_RANGE 0x1E79
-#define V_IN_RANGE_MSG 0x1E7A
-#define V_STATUS_PHASE 0x1E7B
-#define V_GUN_BURST 0x1E7C
-#define V_BULLET_LAST 0x1E7D
-#define V_GUN_SIDE 0x1E7F
-#define V_BULLET_TIMER 0x1E81
-#define V_STATUS_MSG 0x1E82
-#define V_ENGINE_HIT 0x1E83
-#define V_BOMBS_LEFT 0x1EE1
-#define V_DRAW_COLOUR 0x30C8
-#define V_CAPTURE_PTR 0x30C6
-#define V_CAPTURE_MODE 0x30CA
-#define V_VIEW_BUF_SEG 0x3806
 #define V_ROW_OFFSETS 0x380C
 #define V_SPRITES 0x3A10
 
@@ -199,7 +165,7 @@ static void war_score_add(Pc *pc)
     push(pc, REG(BP));
     push(pc, REG(DX));
     CYC(18);
-    REG(AX) = (uint16_t)(REG(AX) + rd16(pc, V_SCORE));
+    REG(AX) = (uint16_t)(REG(AX) + gs_score(pc));
     CYC(6);
     bool le = (int16_t)REG(AX) <= 0x2710;
     JCC(le);
@@ -208,7 +174,7 @@ static void war_score_add(Pc *pc)
         REG(AX) = (uint16_t)(REG(AX) - 0x2710);
     }
     CYC(12);
-    wr16(pc, V_SCORE, REG(AX));
+    gs_set_score(pc, REG(AX));
     war_call(pc, FMT_DEC4, 0x358A);
     CYC(18);
     wr16(pc, 0x1EC5, REG(CX));
@@ -225,7 +191,7 @@ static void war_score_add(Pc *pc)
 static void war_ammo_dec(Pc *pc)
 {
     CYC(12 + 2);
-    REG(AX) = (uint16_t)(rd16(pc, V_AMMO) - 1);
+    REG(AX) = (uint16_t)(gs_ammo(pc) - 1);
     bool ns = !(REG(AX) & 0x8000);
     JCC(ns);
     if (!ns) {
@@ -233,7 +199,7 @@ static void war_ammo_dec(Pc *pc)
         REG(AX) = 0;
     }
     CYC(12);
-    wr16(pc, V_AMMO, REG(AX));
+    gs_set_ammo(pc, REG(AX));
     war_call(pc, FMT_DEC4, 0x35A3);
     CYC(12);
     wr16(pc, 0x1ED4, REG(AX));
@@ -251,8 +217,8 @@ static void war_explosion(Pc *pc)
     CYC(15);
     push(pc, REG(BX));
     CYC(12 + 12 + 4);
-    REG(AX) = rd16(pc, V_EXPLOSION_COLOUR);
-    wr16(pc, V_DRAW_COLOUR, REG(AX));
+    REG(AX) = gs_explosion_colour(pc);
+    gs_set_draw_colour(pc, REG(AX));
     REG(SI) = 0x0830;
     for (;;) {
         CYC(15);
@@ -296,9 +262,9 @@ static void war_explosion(Pc *pc)
 static void war_damage(Pc *pc)
 {
     CYC(12 + 19);
-    SET_LO(AX, rd8(pc, V_HITS));
+    SET_LO(AX, gs_hits_taken(pc));
     int8_t al = (int8_t)lo8(REG(AX));
-    bool ge = (int8_t)rd8(pc, V_KILLS) >= 4;
+    bool ge = (int8_t)gs_kills(pc) >= 4;
     JCC(ge);
     int level; /* 0 none, 1 from 3624, 2 from 3618, 3 from 3613, 4 from 360E, 5 from 3609 */
     if (!ge) {
@@ -332,32 +298,32 @@ static void war_damage(Pc *pc)
     }
     if (level >= 5) {
         CYC(19);
-        wr8(pc, V_ENGINE_HIT, rd8(pc, V_ENGINE_HIT) | 1);
+        gs_set_wing_damage(pc, rd8(pc, GS_WING_DAMAGE) | 1);
     }
     if (level >= 4) {
         CYC(19);
-        wr8(pc, V_DAMAGE, rd8(pc, V_DAMAGE) | 2);
+        gs_set_engine_faults(pc, rd8(pc, GS_ENGINE_FAULTS) | 2);
     }
     if (level >= 3) {
         CYC(19);
-        wr8(pc, V_DAMAGE, rd8(pc, V_DAMAGE) | 1);
+        gs_set_engine_faults(pc, rd8(pc, GS_ENGINE_FAULTS) | 1);
     }
     if (level >= 2) {
         CYC(19);
-        bool gt = (int8_t)rd8(pc, V_FRAME_COUNTER) > 0x3F;
+        bool gt = (int8_t)rd8(pc, GS_FRAME_COUNTER) > 0x3F;
         JCC(gt);
         if (!gt) {
             CYC(19);
-            wr8(pc, V_DAMAGE, rd8(pc, V_DAMAGE) | 8);
+            gs_set_engine_faults(pc, rd8(pc, GS_ENGINE_FAULTS) | 8);
         }
     }
     if (level >= 1) {
         CYC(19);
-        bool gt = (int8_t)rd8(pc, V_FRAME_COUNTER) > 0x3F;
+        bool gt = (int8_t)rd8(pc, GS_FRAME_COUNTER) > 0x3F;
         JCC(gt);
         if (!gt) {
             CYC(19);
-            wr8(pc, V_DAMAGE, rd8(pc, V_DAMAGE) | 4);
+            gs_set_engine_faults(pc, rd8(pc, GS_ENGINE_FAULTS) | 4);
         }
     }
     ret(pc);
@@ -377,39 +343,39 @@ static void enemy_delta(Pc *pc)
     bool cf = REG(BP) < REG(AX);
     REG(BP) = (uint16_t)(REG(BP) - REG(AX));
     REG(AX) = REG(BP);
-    wr16(pc, V_DELTA_EAST, REG(AX));
+    wr16(pc, GS_DELTA_EAST, REG(AX));
     lodsb(pc);
     CYC(5 + 4 + 12);
     uint8_t cl = lo8(REG(CX)), al = lo8(REG(AX));
     uint8_t r = (uint8_t)(cl - al - cf);
     SET_LO(CX, r);
     SET_LO(AX, r);
-    wr8(pc, V_DELTA_EAST + 2, r);
+    wr8(pc, (uint16_t)(GS_DELTA_EAST + 2), r);
     lodsw(pc);
     CYC(5 + 4 + 12);
     cf = REG(DI) < REG(AX);
     REG(DI) = (uint16_t)(REG(DI) - REG(AX));
     REG(AX) = REG(DI);
-    wr16(pc, V_DELTA_ALT, REG(AX));
+    wr16(pc, GS_DELTA_ALT, REG(AX));
     lodsb(pc);
     CYC(5 + 4 + 12);
     r = (uint8_t)(hi8(REG(CX)) - lo8(REG(AX)) - cf);
     SET_HI(CX, r);
     SET_LO(AX, r);
-    wr8(pc, V_DELTA_ALT + 2, r);
+    wr8(pc, (uint16_t)(GS_DELTA_ALT + 2), r);
     lodsw(pc);
     CYC(5 + 4 + 12);
     cf = REG(DX) < REG(AX);
     REG(DX) = (uint16_t)(REG(DX) - REG(AX));
     REG(AX) = REG(DX);
-    wr16(pc, V_DELTA_NORTH, REG(AX));
+    wr16(pc, GS_DELTA_NORTH, REG(AX));
     lodsb(pc);
     CYC(12 + 5 + 4 + 12);
     REG(CX) = pop(pc);
     r = (uint8_t)(lo8(REG(CX)) - lo8(REG(AX)) - cf);
     SET_LO(CX, r);
     SET_LO(AX, r);
-    wr8(pc, V_DELTA_NORTH + 2, r);
+    wr8(pc, (uint16_t)(GS_DELTA_NORTH + 2), r);
     ret(pc);
 }
 
@@ -440,12 +406,12 @@ static void enemy_delta_home(Pc *pc)
 static void enemy_delta_player(Pc *pc)
 {
     CYC(17 * 5 + 12);
-    REG(BP) = rd16(pc, 0x30D2);
-    SET_LO(CX, rd8(pc, 0x30D4));
-    REG(DI) = rd16(pc, 0x30D6);
-    SET_HI(CX, rd8(pc, 0x30D8));
-    REG(DX) = rd16(pc, 0x30DA);
-    SET_LO(AX, rd8(pc, 0x30DC));
+    REG(BP) = rd16(pc, (uint16_t)(GS_POS_EAST + 1));
+    SET_LO(CX, rd8(pc, (uint16_t)(GS_POS_EAST + 3)));
+    REG(DI) = rd16(pc, (uint16_t)(GS_ALTITUDE + 1));
+    SET_HI(CX, rd8(pc, (uint16_t)(GS_ALTITUDE + 3)));
+    REG(DX) = rd16(pc, (uint16_t)(GS_POS_NORTH + 1));
+    SET_LO(AX, rd8(pc, (uint16_t)(GS_POS_NORTH + 3)));
     enemy_delta(pc);
 }
 
@@ -468,12 +434,12 @@ static void abs_axis(Pc *pc, uint16_t var)
 /* 0050:32CB: CX:BP = |east| + |alt| + |north| of the last delta (one's complement). */
 static void enemy_distance(Pc *pc)
 {
-    abs_axis(pc, V_DELTA_EAST);
+    abs_axis(pc, GS_DELTA_EAST);
     CYC(4 + 4);
     REG(BP) = REG(DX);
     REG(CX) = REG(AX);
     for (int i = 0; i < 2; i++) {
-        abs_axis(pc, i ? V_DELTA_NORTH : V_DELTA_ALT);
+        abs_axis(pc, i ? GS_DELTA_NORTH : GS_DELTA_ALT);
         CYC(5 + 5);
         uint32_t lo = (uint32_t)REG(BP) + REG(DX);
         REG(BP) = (uint16_t)lo;
@@ -534,22 +500,22 @@ static void scope_marker(Pc *pc)
 {
     CYC(4 + 12);
     SET_LO(DX, 0x15);
-    REG(AX) = rd16(pc, 0x3113);
+    REG(AX) = gs_eye_p1_w(pc, 2);
     if (!scope_scale(pc, 0x33A4, 0x3352))
         return;
     CYC(4 + 5 + 6 + 4 + 12);
     SET_LO(CX, hi8(REG(AX)));
     SET_LO(CX, (uint8_t)(0xAB - lo8(REG(CX))));
     SET_LO(DX, 0x16);
-    REG(AX) = rd16(pc, 0x310F);
+    REG(AX) = gs_eye_p1_w(pc, 0);
     if (!scope_scale(pc, 0x33A8, 0x3361))
         return;
     CYC(6 + 11 + 25 + 4 + 17 + 6);
     SET_HI(AX, (uint8_t)(hi8(REG(AX)) + 0x87));
-    SREG(ES) = rd16(pc, V_SCREEN_SEG);
-    push(pc, rd16(pc, V_DRAW_COLOUR));
+    SREG(ES) = gs_screen_seg(pc);
+    push(pc, gs_draw_colour(pc));
     REG(BP) = 0x8008;
-    REG(DX) = rd16(pc, 0x3111);
+    REG(DX) = gs_eye_p1_w(pc, 1);
     bool le = (int16_t)REG(DX) <= -0x14;
     JCC(le);
     if (!le) {
@@ -565,20 +531,20 @@ static void scope_marker(Pc *pc)
         }
     }
     CYC(18 + 15 + 19);
-    wr16(pc, V_DRAW_COLOUR, REG(BP));
+    gs_set_draw_colour(pc, REG(BP));
     push(pc, REG(BX));
-    bool skip = rd8(pc, V_VIEW_NOT_FWD) != 0;
+    bool skip = gs_view_not_forward(pc) != 0;
     JCC(skip);
     if (!skip) {
         CYC(19);
-        skip = rd8(pc, V_RADAR_VIEW) == 1;
+        skip = gs_radar_view(pc) == 1;
         JCC(skip);
         if (!skip)
             war_call(pc, PLOT_PIXEL, 0x339B);
     }
     CYC(12 + 26 + 4 + 17 + 18);
     REG(BX) = pop(pc);
-    wr16(pc, V_DRAW_COLOUR, pop(pc));
+    gs_set_draw_colour(pc, pop(pc));
     SET_LO(AX, 0xFF);
     wr8(pc, (uint16_t)(REG(BX) + 9), 0xFF);
     ret(pc);
@@ -694,7 +660,7 @@ static void enemy_sprite(Pc *pc)
         return;
     }
     CYC(11 + 5 + 4 + 4 + 8 + 4 + 8 + 18 + 4 + 17 + 13);
-    SREG(ES) = rd16(pc, V_VIEW_BUF_SEG);
+    SREG(ES) = gs_view_buf_seg(pc);
     REG(BX) = (uint16_t)(lo8(REG(CX)) << 1);
     REG(DX) = (uint16_t)((hi8(REG(AX)) >> 1) + rd16(pc, (uint16_t)(REG(BX) + V_ROW_OFFSETS)));
     REG(BX) = REG(DX);
@@ -752,9 +718,9 @@ static void rotate_store(Pc *pc)
 {
     war_call(pc, ROTATE_POINT, 0x47ED);
     CYC(18 * 3);
-    wr16(pc, 0x310F, REG(BX));
-    wr16(pc, 0x3111, REG(CX));
-    wr16(pc, 0x3113, REG(DX));
+    gs_set_eye_p1_w(pc, 0, REG(BX));
+    gs_set_eye_p1_w(pc, 1, REG(CX));
+    gs_set_eye_p1_w(pc, 2, REG(DX));
     ret(pc);
 }
 
@@ -770,23 +736,23 @@ static void enemy_draw(Pc *pc)
     CYC(17 + 16 + 15 + 12);
     push(pc, SREG(DS));
     push(pc, REG(BX));
-    wr8(pc, 0x3380, (uint8_t)(rd8(pc, 0x3380) + 1));
+    gs_set_no_normalise_queue(pc, (uint8_t)(gs_no_normalise_queue(pc) + 1));
     call_body(pc, 0x31C1, rotate_store);
     CYC(12 + 14);
     REG(BX) = pop(pc);
     SREG(DS) = pop(pc);
     call_body(pc, 0x31C6, scope_marker);
     CYC(19 + 19 + 16 + 15);
-    wr8(pc, V_CAPTURE_MODE, 0xFF);
-    wr16(pc, V_CAPTURE_PTR, CAPTURE_LIST);
+    gs_set_capture_mode(pc, 0xFF);
+    gs_set_capture_ptr(pc, CAPTURE_LIST);
     push(pc, SREG(DS));
     push(pc, REG(BX));
     war_call(pc, PROJECT_DOT, 0x31D6);
     CYC(12 + 14 + 19 + 19);
     REG(BX) = pop(pc);
     SREG(DS) = pop(pc);
-    wr8(pc, V_CAPTURE_MODE, 0);
-    bool none = rd16(pc, V_CAPTURE_PTR) == CAPTURE_LIST;
+    gs_set_capture_mode(pc, 0);
+    bool none = gs_capture_ptr(pc) == CAPTURE_LIST;
     JCC(none);
     if (none) {
         ret(pc);
@@ -797,10 +763,10 @@ static void enemy_draw(Pc *pc)
     push(pc, REG(BX));
     push(pc, SREG(DS));
     SET_LO(CX, hi8(REG(CX)));
-    wr16(pc, V_DRAW_COLOUR, 0xF00F);
+    gs_set_draw_colour(pc, 0xF00F);
     push(pc, REG(AX));
     REG(DI) = 0;
-    REG(AX) = rd16(pc, 0x3113);
+    REG(AX) = gs_eye_p1_w(pc, 2);
     bool far = (int16_t)REG(AX) >= 0x2BC;
     JCC(!far);
     if (far) { /* a single dot */
@@ -876,7 +842,7 @@ static void enemy_draw(Pc *pc)
     }
     if (!skip) {
         CYC(19);
-        skip = rd8(pc, V_VIEW_NOT_FWD) != 0;
+        skip = gs_view_not_forward(pc) != 0;
         JCC(skip);
     }
     if (!skip) {
@@ -887,8 +853,8 @@ static void enemy_draw(Pc *pc)
     if (!skip) {
         CYC(5 + 18 + 19);
         SET_LO(CX, 1);
-        wr8(pc, V_IN_RANGE, 1);
-        wr8(pc, V_IN_RANGE_MSG, rd8(pc, V_IN_RANGE_MSG) | 1);
+        gs_set_in_range(pc, 1);
+        gs_set_in_range_msg(pc, rd8(pc, GS_IN_RANGE_MSG) | 1);
     }
     CYC(18);
     wr8(pc, (uint16_t)(REG(BX) + 0xA), lo8(REG(CX)));
@@ -909,8 +875,8 @@ static void war_enemy_update(Pc *pc)
         return;
     }
     CYC(17 + 17 + 5);
-    REG(CX) = rd16(pc, 0x30D3);
-    REG(DX) = rd16(pc, 0x30DB);
+    REG(CX) = rd16(pc, (uint16_t)(GS_POS_EAST + 2));
+    REG(DX) = rd16(pc, (uint16_t)(GS_POS_NORTH + 2));
     SET_LO(AX, (uint8_t)(lo8(REG(AX)) - 1));
     bool home = lo8(REG(AX)) == 0;
     JCC(!home);
@@ -966,9 +932,9 @@ static void war_enemy_update(Pc *pc)
             SET_LO(AX, rd8(pc, (uint16_t)(bx + 0x18)));
         } else {
             CYC(19 + 19 + 12 + 15 + 15);
-            wr8(pc, V_ENEMY_FIRE, 1);
+            gs_set_enemy_fire(pc, 1);
             wr8(pc, (uint16_t)(bx + 0x1A), 0xFF);
-            wr8(pc, V_HITS, (uint8_t)(rd8(pc, V_HITS) + 1));
+            gs_set_hits_taken(pc, (uint8_t)(rd8(pc, GS_HITS_TAKEN) + 1));
             push(pc, REG(AX));
             push(pc, REG(BX));
             call_body(pc, 0x310E, war_damage);
@@ -998,7 +964,7 @@ static void war_enemy_update(Pc *pc)
             wr8(pc, (uint16_t)(a + 2), (uint8_t)(rd8(pc, (uint16_t)(a + 2)) + (sum >> 16)));
         } else {
             CYC(14);
-            bool even = !(rd8(pc, V_FRAME_COUNTER) & 1);
+            bool even = !(rd8(pc, GS_FRAME_COUNTER) & 1);
             JCC(even);
             if (!even) {
                 CYC(19 + 19);
@@ -1016,9 +982,9 @@ static void war_enemy_update(Pc *pc)
             }
         }
     } else {
-        enemy_step(pc, 0x14, V_DELTA_ALT + 2, 3);
-        enemy_step(pc, 0x13, V_DELTA_EAST + 2, 0);
-        enemy_step(pc, 0x15, V_DELTA_NORTH + 2, 6);
+        enemy_step(pc, 0x14, GS_DELTA_ALT + 2, 3);
+        enemy_step(pc, 0x13, GS_DELTA_EAST + 2, 0);
+        enemy_step(pc, 0x15, GS_DELTA_NORTH + 2, 6);
     }
     enemy_draw(pc);
 }
@@ -1034,16 +1000,16 @@ static void war_enemy_update(Pc *pc)
 static void war_guns(Pc *pc)
 {
     CYC(19);
-    bool idle = rd8(pc, V_GUN_BURST) == 0;
+    bool idle = gs_gun_burst(pc) == 0;
     JCC(idle);
     if (!idle) {
         CYC(19 + 12);
-        wr8(pc, V_SOUND_STATE, 3);
-        wr8(pc, V_GUN_BURST, (uint8_t)(rd8(pc, V_GUN_BURST) - 1));
+        gs_set_sound_state(pc, 3);
+        gs_set_gun_burst(pc, (uint8_t)(rd8(pc, GS_GUN_BURST) - 1));
         call_body(pc, 0x3462, war_ammo_dec);
         CYC(19 + 12 + 6 + 6);
-        wr8(pc, V_BULLET_TIMER, 0x19);
-        REG(AX) = (uint16_t)(rd16(pc, V_BULLET_LAST) + 6);
+        gs_set_bullet_timer(pc, 0x19);
+        REG(AX) = (uint16_t)(gs_bullet_last(pc) + 6);
         bool ne = REG(AX) != 0x1F3A;
         JCC(ne);
         if (!ne) {
@@ -1055,8 +1021,8 @@ static void war_guns(Pc *pc)
         SET_LO(AX, rd8(pc, (uint16_t)(REG(BX) + 5)));
         wr8(pc, REG(BX), lo8(REG(AX)));
         REG(AX) = 0x6941;
-        uint8_t side = rd8(pc, V_GUN_SIDE) ^ 1;
-        wr8(pc, V_GUN_SIDE, side);
+        uint8_t side = gs_gun_side(pc) ^ 1;
+        gs_set_gun_side(pc, side);
         JCC(side == 0);
         if (side) {
             CYC(4);
@@ -1064,22 +1030,22 @@ static void war_guns(Pc *pc)
         }
         CYC(18 + 18);
         wr16(pc, (uint16_t)(REG(BX) + 3), REG(AX));
-        wr16(pc, V_BULLET_LAST, REG(BX));
+        gs_set_bullet_last(pc, REG(BX));
     }
     CYC(12);
-    uint8_t timer = (uint8_t)(rd8(pc, V_BULLET_TIMER) - 1);
-    wr8(pc, V_BULLET_TIMER, timer);
+    uint8_t timer = (uint8_t)(gs_bullet_timer(pc) - 1);
+    gs_set_bullet_timer(pc, timer);
     JCC(timer != 0);
     if (timer == 0) {
         CYC(12);
-        wr8(pc, V_BULLET_TIMER, 1);
+        gs_set_bullet_timer(pc, 1);
         ret(pc);
         return;
     }
     CYC(4 + 25 + 19);
     REG(BX) = BULLETS;
-    push(pc, rd16(pc, V_DRAW_COLOUR));
-    wr16(pc, V_DRAW_COLOUR, 0x8008);
+    push(pc, gs_draw_colour(pc));
+    gs_set_draw_colour(pc, 0x8008);
     for (;; CYC(6 + 17), REG(BX) = (uint16_t)(REG(BX) + 6)) {
         CYC(4);
         REG(SI) = REG(BX);
@@ -1112,7 +1078,7 @@ static void war_guns(Pc *pc)
                     REG(AX) = 1;
                     call_body(pc, 0x34D3, war_score_add);
                     CYC(12 + 19 + 19 + 4);
-                    wr8(pc, V_KILLS, (uint8_t)(rd8(pc, V_KILLS) + 1));
+                    gs_set_kills(pc, (uint8_t)(rd8(pc, GS_KILLS) + 1));
                     wr8(pc, (uint16_t)(REG(BX) + 0x1F54), 0);
                     wr8(pc, (uint16_t)(REG(BX) + 0x1F45), 0);
                     SET_LO(CX, 0x64);
@@ -1147,11 +1113,11 @@ static void war_guns(Pc *pc)
         SET_HI(AX, lo8(REG(CX)));
         SET_LO(CX, hi8(REG(CX)));
         push(pc, REG(BX));
-        bool skip = rd8(pc, V_VIEW_NOT_FWD) != 0;
+        bool skip = gs_view_not_forward(pc) != 0;
         JCC(skip);
         if (!skip) {
             CYC(19);
-            skip = rd8(pc, V_RADAR_VIEW) == 1;
+            skip = gs_radar_view(pc) == 1;
             JCC(skip);
             if (!skip)
                 war_call(pc, PLOT_PIXEL_ES, 0x3516);
@@ -1160,7 +1126,7 @@ static void war_guns(Pc *pc)
         REG(BX) = pop(pc);
     }
     CYC(26);
-    wr16(pc, V_DRAW_COLOUR, pop(pc));
+    gs_set_draw_colour(pc, pop(pc));
     ret(pc);
 }
 
@@ -1173,7 +1139,7 @@ static void war_guns(Pc *pc)
 static void war_bomb_fall(Pc *pc)
 {
     CYC(12 + 5);
-    REG(AX) = rd16(pc, V_BOMB_STATE);
+    REG(AX) = gs_bomb_state(pc);
     bool none = REG(AX) == 0;
     JCC(none);
     if (none) {
@@ -1186,14 +1152,14 @@ static void war_bomb_fall(Pc *pc)
     JCC(ns);
     if (!ns) {
         CYC(12 + 5);
-        REG(AX) = rd16(pc, V_BOMB_SCORE);
+        REG(AX) = gs_bomb_score(pc);
         bool miss = REG(AX) == 0;
         JCC(miss);
         if (!miss) {
             call_body(pc, 0x3537, war_score_add);
             CYC(19 + 19 + 4);
-            wr8(pc, V_WAR_STATUS, rd8(pc, V_WAR_STATUS) | 1);
-            wr16(pc, V_EXPLOSION_COLOUR, 0x2002);
+            gs_set_war_status_line(pc, rd8(pc, GS_WAR_STATUS_LINE) | 1);
+            gs_set_explosion_colour(pc, 0x2002);
             SET_LO(CX, 0xC8);
             call_body(pc, 0x3547, war_explosion);
         }
@@ -1201,8 +1167,8 @@ static void war_bomb_fall(Pc *pc)
         REG(AX) = 0;
     }
     CYC(19 + 12);
-    wr16(pc, V_BOMB_SCORE, 0);
-    wr16(pc, V_BOMB_STATE, REG(AX));
+    gs_set_bomb_score(pc, 0);
+    gs_set_bomb_state(pc, REG(AX));
     ret(pc);
 }
 
@@ -1213,7 +1179,7 @@ static void war_bomb_fall(Pc *pc)
 static void war_scope_clear(Pc *pc)
 {
     CYC(11 + 5 + 4 + 4);
-    SREG(ES) = rd16(pc, V_SCREEN_SEG);
+    SREG(ES) = gs_screen_seg(pc);
     REG(AX) = 0;
     REG(DX) = 0x16;
     REG(SI) = 0x17A8;
@@ -1253,41 +1219,41 @@ static void war_scope_clear(Pc *pc)
 static void war_status(Pc *pc)
 {
     CYC(15);
-    uint8_t v = rd8(pc, V_IN_RANGE_MSG);
-    wr8(pc, V_IN_RANGE_MSG, v >> 1);
+    uint8_t v = gs_in_range_msg(pc);
+    gs_set_in_range_msg(pc, v >> 1);
     bool cf = v & 1;
     JCC(!cf);
     uint16_t msg = 0;
     if (cf) {
         CYC(19);
-        bool same = rd8(pc, V_STATUS_MSG) == 1;
+        bool same = gs_status_msg(pc) == 1;
         JCC(same);
         if (!same) {
             CYC(19 + 4 + 17);
-            wr8(pc, V_STATUS_MSG, 1);
+            gs_set_status_msg(pc, 1);
             msg = 0x1E92; /* IN RANGE */
         }
     } else {
         CYC(19);
-        bool fire = rd8(pc, V_ENEMY_FIRE) == 1;
+        bool fire = gs_enemy_fire(pc) == 1;
         JCC(!fire);
         if (fire) {
             CYC(12 + 19);
-            wr8(pc, V_ENEMY_FIRE, (uint8_t)(rd8(pc, V_ENEMY_FIRE) - 1));
-            bool same = rd8(pc, V_STATUS_MSG) == 2;
+            gs_set_enemy_fire(pc, (uint8_t)(rd8(pc, GS_ENEMY_FIRE) - 1));
+            bool same = gs_status_msg(pc) == 2;
             JCC(same);
             if (!same) {
                 CYC(19 + 4 + 17);
-                wr8(pc, V_STATUS_MSG, 2);
+                gs_set_status_msg(pc, 2);
                 msg = 0x1EA0; /* ENEMY FIRE! */
             }
         } else {
             CYC(19);
-            bool same = rd8(pc, V_STATUS_MSG) == 0;
+            bool same = gs_status_msg(pc) == 0;
             JCC(same);
             if (!same) {
                 CYC(19 + 4);
-                wr8(pc, V_STATUS_MSG, 0);
+                gs_set_status_msg(pc, 0);
                 msg = 0x1EAE; /* blanks */
             }
         }
@@ -1297,10 +1263,10 @@ static void war_status(Pc *pc)
         war_call(pc, PRINT_STR, 0x3407);
     }
     CYC(12 + 6 + 4 + 26 + 5);
-    REG(AX) = rd16(pc, V_FRAME_COUNTER) & 0x18;
+    REG(AX) = gs_frame_counter(pc) & 0x18;
     SET_HI(AX, lo8(REG(AX)));
-    uint8_t old = rd8(pc, V_STATUS_PHASE);
-    wr8(pc, V_STATUS_PHASE, hi8(REG(AX)));
+    uint8_t old = gs_status_phase(pc);
+    gs_set_status_phase(pc, hi8(REG(AX)));
     SET_HI(AX, old);
     bool same = lo8(REG(AX)) == old;
     JCC(same);
@@ -1324,11 +1290,11 @@ static void war_status(Pc *pc)
         war_call(pc, PRINT_STR2, 0x3430);
     }
     CYC(19);
-    bool declare = rd8(pc, V_WAR_STATUS) == 1;
+    bool declare = gs_war_status_line(pc) == 1;
     JCC(!declare);
     if (declare) {
         CYC(19 + 4);
-        wr8(pc, V_WAR_STATUS, 3);
+        gs_set_war_status_line(pc, 3);
         REG(SI) = 0x1E84; /* BEGIN WAR!! */
         war_call(pc, PRINT_STR, 0x3442);
         CYC(BEGIN_WAR_DELAY_CYCLES);
@@ -1345,26 +1311,26 @@ static void war_status(Pc *pc)
 static void war_frame(Pc *pc)
 {
     CYC(19);
-    bool war = rd8(pc, 0x204E) != 0;
+    bool war = gs_war_mode(pc) != 0;
     JCC(war);
     if (!war) {
         CYC(19);
-        bool was = rd8(pc, V_WAR_ACTIVE) != 0;
+        bool was = gs_war_active(pc) != 0;
         JCC(!was);
         if (was) {
             CYC(19 + 19);
-            wr8(pc, V_WAR_ACTIVE, 0);
+            gs_set_war_active(pc, 0);
             wr16(pc, 0x208B, 0xFFFF);
         }
         ret(pc);
         return;
     }
     CYC(19);
-    bool active = rd8(pc, V_WAR_ACTIVE) != 0;
+    bool active = gs_war_active(pc) != 0;
     JCC(active);
     if (!active) {
         CYC(19 + 19);
-        wr8(pc, V_WAR_ACTIVE, 1);
+        gs_set_war_active(pc, 1);
         wr16(pc, 0x208B, rd16(pc, 0x208B) & 0x70FF);
         ret(pc);
         return;
@@ -1374,7 +1340,7 @@ static void war_frame(Pc *pc)
     call_body(pc, 0x3056, war_guns);
     call_body(pc, 0x3059, war_bomb_fall);
     CYC(19);
-    bool peace = rd8(pc, V_WAR_STATUS) == 0;
+    bool peace = gs_war_status_line(pc) == 0;
     JCC(peace);
     if (!peace) {
         for (int i = 0; i < 6; i++) {
@@ -1384,25 +1350,25 @@ static void war_frame(Pc *pc)
         }
     }
     CYC(19);
-    bool skip = rd8(pc, V_VIEW_NOT_FWD) != 0;
+    bool skip = gs_view_not_forward(pc) != 0;
     JCC(skip);
     if (!skip) {
         CYC(19);
-        skip = rd8(pc, V_RADAR_VIEW) == 1;
+        skip = gs_radar_view(pc) == 1;
         JCC(skip);
     }
     if (!skip) { /* the gun sight */
         CYC(4 + 19 + 16);
         REG(AX) = 0x1FE9;
-        wr16(pc, V_DRAW_COLOUR, 0);
+        gs_set_draw_colour(pc, 0);
         push(pc, SREG(ES));
         war_call(pc, DRAW_LINE_LIST, 0x309F);
         CYC(14);
         SREG(ES) = pop(pc);
     }
     CYC(19 + 19);
-    wr8(pc, V_IN_RANGE, 0);
-    wr8(pc, V_IN_RANGE_MSG, 0);
+    gs_set_in_range(pc, 0);
+    gs_set_in_range_msg(pc, 0);
     ret(pc);
 }
 
@@ -1412,15 +1378,15 @@ static void war_frame(Pc *pc)
 static void war_ground_reset(Pc *pc)
 {
     CYC(19 * 9 + 4);
-    wr8(pc, 0x1DD4, 1);
-    wr8(pc, 0x1DD5, 1);
-    wr8(pc, 0x1DCE, 0x23);
-    wr8(pc, 0x1DD1, 0x23);
+    wr8(pc, GS_MAG_OK, 1);
+    wr8(pc, (uint16_t)(GS_MAG_OK + 1), 1);
+    wr8(pc, (uint16_t)(GS_FUEL_LEFT + 2), 0x23);
+    wr8(pc, (uint16_t)(GS_FUEL_RIGHT + 2), 0x23);
     wr16(pc, 0x19A0, 0xFFFF);
     wr16(pc, 0x041B, 0xFFFF);
-    wr8(pc, V_HITS, 0);
-    wr8(pc, V_DAMAGE, 0);
-    wr16(pc, 0x1DC4, 3);
+    gs_set_hits_taken(pc, 0);
+    gs_set_engine_faults(pc, 0);
+    gs_set_oil_temp_rate(pc, 3);
     REG(BX) = 0x91;
     for (;;) {
         CYC(19 + 6);
@@ -1437,28 +1403,28 @@ static void war_ground_reset(Pc *pc)
 void war_ground_service_body(Pc *pc)
 {
     CYC(19);
-    bool none = rd8(pc, V_GROUND_SERVICE) == 0;
+    bool none = gs_ground_service(pc) == 0;
     JCC(none);
     if (none)
         return;
     CYC(19);
-    bool moving = rd16(pc, V_AIRSPEED) != 0;
+    bool moving = gs_airspeed(pc) != 0;
     JCC(moving);
     if (!moving) {
         call_body(pc, 0x1B95, war_ground_reset);
         CYC(19);
-        bool home = rd8(pc, V_GROUND_SERVICE) == 2;
+        bool home = gs_ground_service(pc) == 2;
         JCC(!home);
         if (home) {
             CYC(19);
-            wr16(pc, V_AMMO, 0x65);
+            gs_set_ammo(pc, 0x65);
             call_body(pc, 0x1BA5, war_ammo_dec);
             CYC(19);
-            wr8(pc, V_BOMBS_LEFT, '5');
+            gs_set_bombs_left(pc, '5');
         }
     }
     CYC(19);
-    wr8(pc, V_GROUND_SERVICE, 0);
+    gs_set_ground_service(pc, 0);
 }
 
 /* 0050:1B84 (the tail of flight_params). */

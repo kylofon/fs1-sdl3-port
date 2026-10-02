@@ -6,6 +6,7 @@
  * same values, since --verify compares every byte the original writes. No caller relies
  * on the flags these routines leave, so no flag_mask is declared. */
 #include "native.h"
+#include "game/state.h"
 
 #include <SDL3/SDL.h>
 
@@ -144,9 +145,9 @@ static uint16_t mulq(uint16_t a, uint16_t b, uint16_t *lo)
 static void select_view_angles(Pc *pc, uint16_t sp)
 {
     stk(pc, (uint16_t)(sp - 2), 0x4624);
-    uint16_t pitch = rd(pc, 0x30F1), bank = rd(pc, 0x30F3), hdg = rd(pc, 0x30F5);
+    uint16_t pitch = (uint16_t)gs_view_pitch(pc), bank = (uint16_t)gs_view_bank(pc), hdg = (uint16_t)gs_view_heading(pc);
     uint16_t a0, a2, a4;
-    if (rd8(pc, 0x0405)) { /* radar_view: look down */
+    if (gs_radar_view(pc)) { /* radar_view: look down */
         a0 = 0x4000;
         a2 = 0;
         a4 = hdg;
@@ -174,9 +175,9 @@ static void select_view_angles(Pc *pc, uint16_t sp)
         }
         }
     }
-    wr(pc, 0x30F7, a0);
-    wr(pc, 0x30F9, a2);
-    wr(pc, 0x30FB, a4);
+    gs_set_view_angles_w(pc, 0, a0);
+    gs_set_view_angles_w(pc, 1, a2);
+    gs_set_view_angles_w(pc, 2, a4);
 }
 
 static void n_build_view_matrix(Pc *pc)
@@ -187,31 +188,31 @@ static void n_build_view_matrix(Pc *pc)
     load_regs(c, &r);
     select_view_angles(pc, sp);
 
-    r.bx = rd(pc, 0x30F7);
+    r.bx = gs_view_angles_w(pc, 0);
     stk(pc, s1, 0x462B);
     sincos_q15(pc, &r, s1);
     uint16_t v3143 = r.ax, v3149 = r.cx;
     wr(pc, 0x3143, v3143);
     wr(pc, 0x3149, v3149);
-    wr(pc, 0x3107, (uint16_t)-r.ax);
+    gs_set_view_matrix_w(pc, 5, (uint16_t)-r.ax);
 
-    r.bx = rd(pc, 0x30F9);
+    r.bx = gs_view_angles_w(pc, 1);
     stk(pc, s1, 0x463E);
     sincos_q15(pc, &r, s1);
     uint16_t v3145 = r.ax, v314B = r.cx;
     wr(pc, 0x3145, v3145);
     wr(pc, 0x314B, v314B);
-    wr(pc, 0x3103, mulq(v3145, v3149, NULL));
-    wr(pc, 0x3105, mulq(v314B, v3149, NULL));
+    gs_set_view_matrix_w(pc, 3, mulq(v3145, v3149, NULL));
+    gs_set_view_matrix_w(pc, 4, mulq(v314B, v3149, NULL));
 
-    r.bx = rd(pc, 0x30FB);
+    r.bx = gs_view_angles_w(pc, 2);
     stk(pc, s1, 0x4669);
     sincos_q15(pc, &r, s1);
     uint16_t v3147 = r.ax, v3157 = r.cx;
     wr(pc, 0x3147, v3147);
     wr(pc, 0x3157, v3157);
-    wr(pc, 0x3101, mulq(v3147, v3149, NULL));
-    wr(pc, 0x310D, mulq(v3149, v3157, NULL));
+    gs_set_view_matrix_w(pc, 2, mulq(v3147, v3149, NULL));
+    gs_set_view_matrix_w(pc, 8, mulq(v3149, v3157, NULL));
     uint16_t v3151 = mulq(v3157, v3145, NULL);
     wr(pc, 0x3151, v3151);
     uint16_t v314D = mulq(v3157, v314B, NULL);
@@ -220,13 +221,13 @@ static void n_build_view_matrix(Pc *pc)
     wr(pc, 0x3155, v3155);
     uint16_t v314F = mulq(v3147, v3145, NULL);
     wr(pc, 0x314F, v314F);
-    wr(pc, 0x30FD, (uint16_t)(mulq(v314F, v3143, NULL) + v314D));
-    wr(pc, 0x310B, (uint16_t)(v314F + v3155));
+    gs_set_view_matrix_w(pc, 0, (uint16_t)(mulq(v314F, v3143, NULL) + v314D));
+    gs_set_view_matrix_w(pc, 7, (uint16_t)(v314F + v3155));
     uint16_t v3153 = mulq(v3147, v314B, NULL);
     wr(pc, 0x3153, v3153);
-    wr(pc, 0x30FF, (uint16_t)(mulq(v3143, v3153, NULL) - v3151));
+    gs_set_view_matrix_w(pc, 1, (uint16_t)(mulq(v3143, v3153, NULL) - v3151));
     r.dx = (uint16_t)(mulq(v3151, v3143, &r.ax) - v3153);
-    wr(pc, 0x3109, r.dx);
+    gs_set_view_matrix_w(pc, 6, r.dx);
 
     store_regs(c, &r);
     native_ret(pc);
@@ -247,18 +248,18 @@ static void n_rotate_point(Pc *pc)
 {
     Cpu8086 *c = &pc->cpu;
     uint16_t sp = c->regs[R_SP];
-    uint16_t x = rd(pc, 0x3139), y = rd(pc, 0x313B), z = rd(pc, 0x313D);
-    uint32_t r0 = sar32(row(x, y, z, rd(pc, 0x30FD), rd(pc, 0x3103), rd(pc, 0x3109)) << 1, 1);
-    uint32_t r1 = row(x, y, z, rd(pc, 0x30FF), rd(pc, 0x3105), rd(pc, 0x310B)) << 1;
-    uint32_t r2 = sar32(row(x, y, z, rd(pc, 0x3101), rd(pc, 0x3107), rd(pc, 0x310D)) << 1, 2);
+    uint16_t x = gs_xform_in_w(pc, 0), y = gs_xform_in_w(pc, 1), z = gs_xform_in_w(pc, 2);
+    uint32_t r0 = sar32(row(x, y, z, gs_view_matrix_w(pc, 0), gs_view_matrix_w(pc, 3), gs_view_matrix_w(pc, 6)) << 1, 1);
+    uint32_t r1 = row(x, y, z, gs_view_matrix_w(pc, 1), gs_view_matrix_w(pc, 4), gs_view_matrix_w(pc, 7)) << 1;
+    uint32_t r2 = sar32(row(x, y, z, gs_view_matrix_w(pc, 2), gs_view_matrix_w(pc, 5), gs_view_matrix_w(pc, 8)) << 1, 2);
     stk(pc, (uint16_t)(sp - 2), (uint16_t)(r0 >> 16));
     stk(pc, (uint16_t)(sp - 4), (uint16_t)r0);
     stk(pc, (uint16_t)(sp - 6), (uint16_t)(r1 >> 16));
     stk(pc, (uint16_t)(sp - 8), (uint16_t)r1);
     uint16_t ax = (uint16_t)r2;
 
-    uint8_t f = rd8(pc, 0x3380);
-    wr8(pc, 0x3380, f >> 1);
+    uint8_t f = gs_no_normalise_queue(pc);
+    gs_set_no_normalise_queue(pc, f >> 1);
     if (!(f & 1)) {
         for (;;) {
             uint8_t ah = (uint8_t)((uint8_t)(hi8((uint16_t)(r0 >> 16)) + 4) | (uint8_t)(hi8((uint16_t)(r1 >> 16)) + 4) |
@@ -311,13 +312,13 @@ static void n_world_to_eye_delta(Pc *pc)
     Cpu8086 *c = &pc->cpu;
     uint16_t si = (uint16_t)(c->regs[R_BX] + 1);
     uint16_t ax, bx, cx, dx = c->regs[R_DX];
-    uint16_t e0 = rd(pc, 0x30EB), e1 = rd(pc, 0x30ED), e2 = rd(pc, 0x30EF);
+    uint16_t e0 = gs_eye_pos_w(pc, 0), e1 = gs_eye_pos_w(pc, 1), e2 = gs_eye_pos_w(pc, 2);
 
     if (sub_ovf(lodsw(pc, &si), e0, &ax)) { /* 49A2: x overflow */
         bx = ax;
-        ax = rd(pc, 0x315B);
-        uint8_t f = rd8(pc, 0x315D);
-        wr8(pc, 0x315D, 0);
+        ax = gs_flat_y(pc);
+        uint8_t f = gs_flat_flag(pc);
+        gs_set_flat_flag(pc, 0);
         if (f != 1)
             ax = lodsw(pc, &si);
         dx = sar16(e1, 1);
@@ -325,10 +326,10 @@ static void n_world_to_eye_delta(Pc *pc)
         goto z_scaled;
     }
     bx = ax;
-    ax = rd(pc, 0x315B);
+    ax = gs_flat_y(pc);
     {
-        uint8_t f = rd8(pc, 0x315D);
-        wr8(pc, 0x315D, f >> 1);
+        uint8_t f = gs_flat_flag(pc);
+        gs_set_flat_flag(pc, f >> 1);
         if (!(f & 1))
             ax = lodsw(pc, &si);
     }
@@ -346,7 +347,7 @@ static void n_world_to_eye_delta(Pc *pc)
     {
         uint8_t dh = (uint8_t)((uint8_t)(hi8(bx) + 0x20) | (uint8_t)(hi8(cx) + 0x20) | (uint8_t)(hi8(ax) + 0x20));
         uint8_t dl = (uint8_t)(hi8(ax) + 0x20);
-        wr8(pc, 0x3162, 0x0A);
+        gs_set_clip_steps(pc, 0x0A);
         if (dh & 0xC0) {
             dh &= 0xE0;
             int n = (dh == 0x40 || dh == 0xE0) ? 1 : 2;
@@ -381,9 +382,9 @@ z_scaled: /* 49EC */
     dx = sar16(e2, 1);
     ax = sar16((uint16_t)(sar16(ax, 1) - dx), 4);
 store: /* 4996 */
-    wr(pc, 0x3139, bx);
-    wr(pc, 0x313B, cx);
-    wr(pc, 0x313D, ax);
+    gs_set_xform_in_w(pc, 0, bx);
+    gs_set_xform_in_w(pc, 1, cx);
+    gs_set_xform_in_w(pc, 2, ax);
     c->regs[R_AX] = ax;
     c->regs[R_BX] = bx;
     c->regs[R_CX] = cx;
@@ -558,12 +559,12 @@ static void project(Pc *pc, uint16_t x, uint16_t y, uint16_t z)
     c->regs[R_BP] = z;
     c->cycles += PROJECT_DIVIDE_CYCLES;
     uint16_t rem;
-    uint16_t sy = project_axis(y, z, rd8(pc, 0x3168), rd8(pc, 0x316A), &rem);
+    uint16_t sy = project_axis(y, z, gs_proj_params_b(pc, 1), gs_proj_params_b(pc, 3), &rem);
     uint16_t cx = (uint16_t)((y & 0xFF00) | hi8(sy));
-    uint16_t sx = project_axis(x, z, rd8(pc, 0x3167), rd8(pc, 0x3169), &rem);
+    uint16_t sx = project_axis(x, z, gs_proj_params_b(pc, 0), gs_proj_params_b(pc, 2), &rem);
     c->regs[R_AX] = sx;
     c->regs[R_DX] = rem;
-    if (!rd8(pc, 0x30CA)) {
+    if (!gs_capture_mode(pc)) {
         c->regs[R_CX] = cx;
         uint16_t sp = c->regs[R_SP];
         uint16_t ret = mem_read16(pc, c->sregs[S_SS], sp);
@@ -571,11 +572,11 @@ static void project(Pc *pc, uint16_t x, uint16_t y, uint16_t z)
         run_original_until(pc, ret, (uint16_t)(sp + 2)); /* charges plot_pixel_es's cycles */
         return;
     }
-    uint16_t bx = rd(pc, 0x30C6);
+    uint16_t bx = gs_capture_ptr(pc);
     wr8(pc, bx, 0xFE);
     cx = (uint16_t)(hi8(sx) | (cx & 0xFF) << 8); /* MOV CH,AH / XCHG CL,CH */
     wr(pc, (uint16_t)(bx + 1), cx);
-    wr(pc, 0x30C6, (uint16_t)(bx + 3));
+    gs_set_capture_ptr(pc, (uint16_t)(bx + 3));
     c->regs[R_BX] = bx;
     c->regs[R_CX] = cx;
     native_ret(pc);

@@ -9,6 +9,7 @@
  * operand, plus 4 per bit shifted), so the emulated timeline stays the same with the natives
  * on. */
 #include "panel.h"
+#include "game/state.h"
 
 static uint32_t cyc; /* original cycles of the routine being run */
 
@@ -199,14 +200,14 @@ static void draw_indicator_body(Pc *pc, uint16_t sp)
     cyc += 5 + 4 + 11 + 4 + 17 + 18;
     JCC(al != rd8(pc, ds, (uint16_t)(bx + 7)));
     if (al == rd8(pc, ds, (uint16_t)(bx + 7))) {
-        uint8_t force = rd8(pc, ds, 0x1400);
+        uint8_t force = gs_indicator_force(pc);
         cyc += 19;
         JCC(force == 0);
         if (!force) {
             cyc += 20;
             return;
         }
-        wr8(pc, ds, 0x1400, (uint8_t)(force - 1));
+        gs_set_indicator_force(pc, (uint8_t)(force - 1));
         cyc += 12;
     }
     pc->cpu.flags &= (uint16_t)~F_IF;
@@ -288,11 +289,11 @@ static void needle_draw_normal(Pc *pc)
             cyc += 44;
             JCC(cl != 0);
         } while (cl);
-        ax = rd16(pc, ds, 0x910);
+        ax = gs_needle_row_step(pc);
         cyc += 18;
         JCC(!odd_bank(bp));
         if (odd_bank(bp)) {
-            ax = rd16(pc, ds, 0x912);
+            ax = gs_needle_row_step2(pc);
             cyc += 12;
         }
         di += ax;
@@ -335,11 +336,11 @@ static void needle_draw_mirrored(Pc *pc)
             cyc += 76;
             JCC(cl != 0);
         } while (cl);
-        ax = rd16(pc, ds, 0x910);
+        ax = gs_needle_row_step(pc);
         cyc += 18;
         JCC(!odd_bank(bp));
         if (odd_bank(bp)) {
-            ax = rd16(pc, ds, 0x912);
+            ax = gs_needle_row_step2(pc);
             cyc += 12;
         }
         di += ax;
@@ -422,7 +423,7 @@ static bool needle_div_overflow(Pc *pc);
 static void needle_alt_indicator(Pc *pc, uint16_t sp)
 {
     uint16_t ds = SREG(DS);
-    uint8_t on = rd8(pc, ds, 0x914);
+    uint8_t on = gs_alt_band_on(pc);
     cyc += 19;
     JCC(on == 0);
     if (!on) {
@@ -440,7 +441,7 @@ static void needle_alt_indicator(Pc *pc, uint16_t sp)
     sp += 2;
     /* cwd / div cx. A negative [0900] overflows (INT 0); callers check
      * needle_div_overflow() first and run the original instead. */
-    uint16_t ax = rd16(pc, ds, 0x900);
+    uint16_t ax = gs_alt_display(pc);
     uint16_t q = (uint16_t)(ax / 0x5F5), r = (uint16_t)(ax % 0x5F5);
     cyc += 12 + 4 + 5 + 146 + 6;
     JCC(q < 5);
@@ -521,8 +522,8 @@ static void needle_setup(Pc *pc, NeedleQuad q, uint16_t table)
     uint16_t ds = SREG(DS), bx = REG(BX);
     bool lower = q.lower;
     REG(DI) = rd16(pc, ds, (uint16_t)(bx + q.hub));
-    wr16(pc, ds, 0x910, lower ? 0x2000 : 0x1FB0);
-    wr16(pc, ds, 0x912, lower ? 0xE050 : 0xE000);
+    gs_set_needle_row_step(pc, lower ? 0x2000 : 0x1FB0);
+    gs_set_needle_row_step2(pc, lower ? 0xE050 : 0xE000);
     wr8(pc, ds, (uint16_t)(bx + 4), q.code);
     REG(BX) = (uint16_t)((q.code & 0x3F) << 1);
     REG(SI) = rd16(pc, ds, (uint16_t)(table + REG(BX)));
@@ -544,7 +545,7 @@ static void draw_needle2_body(Pc *pc, uint16_t sp)
     cyc += 18;
     JCC(!same);
     if (same) {
-        bool force = rd8(pc, ds, 0x904) & 1;
+        bool force = gs_needle2_force(pc) & 1;
         cyc += 14;
         JCC(force);
         if (!force) {
@@ -597,11 +598,11 @@ static void draw_needle_body(Pc *pc, uint16_t sp)
     vpush(pc, &sp1, ax0);
     vpush(pc, &sp1, bx0);
     vpush(pc, &sp1, cx0);
-    uint8_t redraw = rd8(pc, ds, 0x90F);
+    uint8_t redraw = gs_needle_redraw2(pc);
     cyc += 21 + 15 + 15 + 15 + 12 + 5;
     JCC(redraw == 0);
     if (redraw) {
-        uint16_t cx = rd16(pc, ds, 0x90D);
+        uint16_t cx = gs_second_needle_desc(pc);
         REG(CX) = cx;
         REG(BX) = cx;
         REG(AX) = (uint16_t)(0x0100 | rd8(pc, ds, (uint16_t)(cx + 9)));
@@ -628,8 +629,7 @@ static void draw_needle_body(Pc *pc, uint16_t sp)
  * 8086 then raises INT 0. Rather than emulate that, such calls run the original. */
 static bool needle_div_overflow(Pc *pc)
 {
-    uint16_t ds = rd16(pc, 0, 0x120);
-    return rd8(pc, ds, 0x914) != 0 && (rd16(pc, ds, 0x900) & 0x8000);
+    return gs_alt_band_on(pc) != 0 && (gs_alt_display(pc) & 0x8000);
 }
 
 /* Single-steps the original routine at CS:IP until it returns. Natives are off meanwhile.

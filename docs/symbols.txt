@@ -650,3 +650,35 @@ var 0618:1E82 status_msg byte
 var 0618:1D40 band_patterns table    ; [code] 4 words: above / sloped-left / sloped-right / below patterns of horizon_fill
 var 0618:1D4C horizon_x_limit byte   ; [code] x/2 threshold choosing the horizon_fill fill path
 var 0618:1D4D horizon_slope word     ; [code] 8.8 boundary step per row (fill_sloped_horizon)
+
+
+# ---- from docs/subphases/3.15.md (names the natives used for raw offsets) --------------
+var 0618:03C2 screen_seg word        ; [code] B800h: CGA segment, also the track buffer of boot_read_track
+var 0618:0599 view_not_forward byte  ; [code] nonzero: no gun sight, enemy marks or bullets drawn
+var 0618:07B9 obi_readout_rec table  ; [code] print_str record of the OBI readout: +2 course digits, +8 reciprocal
+var 0618:0874 drag_coef word        ; [code] CL_left^2 + CL_right^2 + slip + flaps
+var 0618:0876 drag_scaled word       ; [code] drag_coef * [08CE]
+var 0618:0878 drag_total word        ; [code] drag_scaled + gear_drag
+var 0618:08BC cl2_left word          ; [code] cl_left^2
+var 0618:08BE cl2_right word         ; [code] cl_right^2
+var 0618:08C6 view_trim_k word       ; [code] constant: view_pitch_trim = hi(AX * [08C6])
+var 0618:08C8 cl0 word               ; [code] constant: base lift coefficient of the wing
+var 0618:08CE drag_scale word        ; [code] [signed] constant
+var 0618:08E2 pitch_to_v_k word      ; [code] [signed] constant: pitch_to_speed = pitch_rate * [08E2] >> 8
+var 0618:08E6 turn_gain word         ; [code] [signed] constant
+var 0618:08E8 accel_to_pitch_k word  ; [code] [signed] constant: accel_to_pitch = accel * [08E8] >> 8
+var 0618:08EC friction word          ; [code] [signed] constant: drag added whenever the aircraft moves
+var 0618:08F0 lift_slope word        ; [code] [signed] constant: cl_aoa = AoA * [08F0]
+var 0618:1E6F delta_east 24-bit      ; [code] war: target - enemy, east
+var 0618:1E72 delta_alt 24-bit       ; [code] war: target - enemy, altitude
+var 0618:1E75 delta_north 24-bit     ; [code] war: target - enemy, north
+var 0618:1E79 in_range byte          ; [code] war: an enemy is within gun range
+var 0618:1E7B status_phase byte      ; [code] war: status line phase
+var 0618:1E7D bullet_last word       ; [code] war: last bullet record
+var 0618:1E7F gun_side byte          ; [code] war: alternates the gun (left / right)
+var 0618:2050 editor_north word      ; [code] editor_values+7: N, the integer word of pos_north
+var 0618:2052 editor_east word       ; [code] editor_values+9: E, the integer word of pos_east
+var 0618:2054 editor_alt word        ; [code] editor_values+0B: altitude (feet)
+var 0618:310F eye_p1 table           ; [code] eye-space point 1: x, y, z words (view_matrix+18)
+var 0618:311B eye_p2 table           ; [code] eye-space point 2: x, y, z words
+var 0618:3127 eye_p3 table           ; [code] eye-space point 3: x, y, z words
