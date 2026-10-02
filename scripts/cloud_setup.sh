@@ -45,12 +45,17 @@ fi
 size=$(wc -c < "$IMAGE" | tr -d ' ')
 [ "$size" = 163840 ] || { echo "Unexpected image size $size" >&2; exit 1; }
 
-if [ -n "${WINDOWS:-}" ]; then
-    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_PREFIX_PATH=C:/msys64/mingw64
-else
-    cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-fi
-cmake --build build
+# build/: the game (C scheduler, no interpreter). build-emu/: FS1_EMULATOR=ON, the 8086 interpreter and
+# emulated PC that the verification tools (trace_campaign, verify_campaign, insn_stats ...) run.
+for cfg in "build OFF" "build-emu ON"; do
+    set -- $cfg
+    if [ -n "${WINDOWS:-}" ]; then
+        cmake -S . -B "$1" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_PREFIX_PATH=C:/msys64/mingw64 -DFS1_EMULATOR=$2
+    else
+        cmake -S . -B "$1" -G Ninja -DCMAKE_BUILD_TYPE=Release -DFS1_EMULATOR=$2
+    fi
+    cmake --build "$1"
+done
 $PY tools/pc_loadstream.py "$IMAGE" --dump extracted
 # A local worktree can reuse the main checkout's trace instead of a 15-minute campaign.
 main_trace="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)/../extracted/trace.bin"

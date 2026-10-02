@@ -129,7 +129,7 @@ static void run_from(Pc *pc, uint16_t target)
             done = native_call(pc, c->ip);
         if (!done) {
             c->hook_map = NULL; /* stepped here, so that no nested --verify starts */
-            cpu_step(c);
+            native_or_cpu_step(pc);
             c->hook_map = map;
         }
         uint16_t d = (uint16_t)(c->regs[R_SP] - sp0);
@@ -591,8 +591,8 @@ static void entry_run(Pc *pc, void (*body)(Pc *), bool irq0)
     Cpu8086 *c = &pc->cpu;
     uint64_t start = c->cycles;
     bool timer_held = irq0 && (pc->pic_isr & 1) && !(c->flags & F_IF);
-    if (under_verify(pc)) {
-        body(pc);
+    if (under_verify(pc) || pc->csched) {
+        body(pc); /* --verify, or the C scheduler (3.22): no interrupt can fall inside */
     } else if (log_ready(&irq_log)) {
         Cpu8086 pre = *c;
         PitChannel t0 = pc->pit[0];

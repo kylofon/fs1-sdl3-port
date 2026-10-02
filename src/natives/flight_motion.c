@@ -229,7 +229,7 @@ static void run_original(Pc *pc)
     uint64_t start = c->cycles;
     c->hook_map = NULL;
     for (long n = 0; n < 5000000L; n++) {
-        cpu_step(c);
+        native_or_cpu_step(pc);
         uint16_t d = (uint16_t)(c->regs[R_SP] - sp0);
         if (c->ip == ret_ip && c->sregs[S_CS] == ret_cs && d >= 2 && d < 0x8000)
             break;
@@ -259,7 +259,7 @@ static void begin(void)
  * off for the original too, so never. */
 static bool irq_hand_back(Pc *pc)
 {
-    if (under_verify(pc) || undo_full)
+    if (under_verify(pc) || undo_full || pc->csched)
         return false;
     const PitChannel *t = &pc->pit[0];
     bool timer = t->loaded && t->count - (int32_t)((pc->pit_cycle_frac + cyc) / 4) <= 0;

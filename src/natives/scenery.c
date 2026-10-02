@@ -130,7 +130,7 @@ static void run_orig(uint16_t ret, uint16_t sp_end)
             C->hook_map = map;
             longjmp(bail_jb, 1);
         }
-        cpu_step(C);
+        native_or_cpu_step(P);
     }
     C->hook_map = map;
 }

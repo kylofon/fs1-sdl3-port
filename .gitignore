@@ -1,5 +1,6 @@
 # Build output
 /build/
+/build-emu/
 /out/
 
 # Copyrighted game media: user-supplied, never committed

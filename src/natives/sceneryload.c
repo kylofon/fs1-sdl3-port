@@ -233,6 +233,8 @@ static bool int13(Pc *pc, uint16_t at)
  * so its state is still the one at the start). As keys.c. */
 static bool irq_due(Pc *pc, uint64_t start, uint64_t n)
 {
+    if (pc->csched)
+        return false; /* C scheduler (3.22): interrupts only come between natives */
     const PitChannel *t = &pc->pit[0];
     bool timer = pc->irq0_backlog || (t->loaded && t->count - (int64_t)((pc->pit_cycle_frac + n) / 4) <= 0);
     bool key = !pc->kbd_full && pc->kbd_head != pc->kbd_tail && start + n >= pc->kbd_next_cycle;
@@ -479,5 +481,14 @@ NativeEntry native_sceneryload[] = {
     ENTRY("scenery_load_loop", 0x044E),
     ENTRY("disk_reset_int13", 0x00F5),
     ENTRY("read_track_int13", 0x0135),
+    /* 3.22: the rest of the boot-sector disk code, for check_master_disk at start-up (the same
+     * interpreter; with the C scheduler there is no original code to run them) */
+    ENTRY("disk_error", 0x00EA),
+    ENTRY("disk_reset", 0x00F0),
+    ENTRY("disk_set_ds", 0x00F8),
+    ENTRY("boot_read_track", 0x0104),
+    ENTRY("motor_off", 0x016B),
+    ENTRY("boot_stream_byte", 0x017C),
+    ENTRY("boot_stream_word", 0x01A0),
     { .name = NULL },
 };

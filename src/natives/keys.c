@@ -132,7 +132,7 @@ static void run_from(Pc *pc, uint16_t target)
             done = native_call(pc, c->ip);
         if (!done) {
             c->hook_map = NULL; /* stepped here, so that no nested --verify starts */
-            cpu_step(c);
+            native_or_cpu_step(pc);
             c->hook_map = map;
         }
         uint16_t d = (uint16_t)(c->regs[R_SP] - sp0);
@@ -178,6 +178,8 @@ static bool under_verify(Pc *pc) { return pc->cpu.write_log != NULL; }
  * only after a native returns, so its state is still the one at the start). */
 static bool irq_due(Pc *pc, uint64_t start, uint64_t n)
 {
+    if (pc->csched)
+        return false; /* C scheduler (3.22): interrupts only come between natives */
     const PitChannel *t = &pc->pit[0];
     bool timer = pc->irq0_backlog || (t->loaded && t->count - (int64_t)((pc->pit_cycle_frac + n) / 4) <= 0);
     bool key = !pc->kbd_full && pc->kbd_head != pc->kbd_tail && start + n >= pc->kbd_next_cycle;
@@ -1574,7 +1576,7 @@ static bool check_original(Pc *pc, bool iret, uint64_t *cycles)
     for (long n = 0; n < STEP_CAP && !returned; n++) {
         if (!(n && map && c->sregs[S_CS] == GAME_CS && map[c->ip] && native_call(pc, c->ip))) {
             c->hook_map = NULL;
-            cpu_step(c);
+            native_or_cpu_step(pc);
             c->hook_map = map;
         }
         uint16_t d = (uint16_t)(c->regs[R_SP] - sp0);
@@ -1608,7 +1610,7 @@ static void entry_run(Pc *pc, const char *name, void (*body)(Pc *), bool iret)
         if (check && c->cycles - start != orig)
             SDL_Log("cycle-check %s: original %llu native %llu", name, (unsigned long long)orig,
                     (unsigned long long)(c->cycles - start));
-    } else if (log_ready(&irq_log)) {
+    } else if (!pc->csched && log_ready(&irq_log)) {
         Cpu8086 pre = *c;
         dev_save(pc, &dev_pre);
         c->write_log = &irq_log;

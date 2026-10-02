@@ -20,3 +20,4 @@ NATIVE_AREA(keys)            /* 3.18 keyboard and controls */
 NATIVE_AREA(sound)           /* 3.19 sound */
 NATIVE_AREA(sceneryload)     /* 3.20 scenery loading */
 NATIVE_AREA(mainloop)        /* 3.21 main loop, frame leftovers, polling loops */
+NATIVE_AREA(startup)         /* 3.22 start-up, editor loop, the last original routines */

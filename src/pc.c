@@ -10,9 +10,48 @@
 #define CGA_FRAME_CYCLES 79648 /* 4.77 MHz / 59.92 Hz */
 #define CGA_LINE_CYCLES 304    /* 262 lines per frame */
 
-/* ---- i8259 PIC --------------------------------------------------------------- */
+/* The emulated hardware (PIC, PIT, port I/O, BIOS HLE) and pc_run's interpreter loop are in the
+ * FS1_EMULATOR build only (3.22). The default build keeps the machine as data (memory, CGA
+ * registers, the speaker log) and runs it with the C scheduler (sched.c). */
 
-static void pc_power_on(Pc *pc);
+/* ---- speaker log, CGA status, key queue (both builds) ------------------------- */
+
+void pc_speaker_log(Pc *pc)
+{
+    if (pc->speaker_count < PC_MAX_SPEAKER_EVENTS) {
+        SpeakerEvent *e = &pc->speaker[pc->speaker_count++];
+        uint64_t t = pc->cpu.cycles + (uint64_t)pc->speaker_bias;
+        uint64_t floor = pc->speaker_count > 1 ? pc->speaker[pc->speaker_count - 2].cycle : pc->speaker_slice_start;
+        e->cycle = t > floor ? t : floor; /* in order, within the current slice */
+        e->port61 = pc->port61;
+        e->pit2_reload = pc->pit[2].reload;
+    }
+}
+
+uint8_t pc_cga_status(const Pc *pc)
+{
+    uint32_t pos = (uint32_t)(pc->cpu.cycles % CGA_FRAME_CYCLES);
+    uint32_t line = pos / CGA_LINE_CYCLES;
+    uint32_t col = pos % CGA_LINE_CYCLES;
+    uint8_t s = 0;
+    if (line >= 200 || col >= 240)
+        s |= 0x01;
+    if (line >= 224 && line < 240)
+        s |= 0x08;
+    return s;
+}
+
+void pc_key_event(Pc *pc, uint8_t scancode)
+{
+    int next = (pc->kbd_tail + 1) % PC_KBD_QUEUE;
+    if (next == pc->kbd_head)
+        return;
+    pc->kbd_queue[pc->kbd_tail] = scancode;
+    pc->kbd_tail = next;
+}
+
+#ifdef FS1_EMULATOR
+/* ---- i8259 PIC --------------------------------------------------------------- */
 
 static void pic_raise(Pc *pc, int irq)
 {
@@ -79,16 +118,6 @@ static void pic_write(Pc *pc, uint16_t port, uint8_t v)
 
 /* ---- i8253 PIT ----------------------------------------------------------------- */
 
-static void speaker_log(Pc *pc)
-{
-    if (pc->speaker_count < PC_MAX_SPEAKER_EVENTS) {
-        SpeakerEvent *e = &pc->speaker[pc->speaker_count++];
-        e->cycle = pc->cpu.cycles;
-        e->port61 = pc->port61;
-        e->pit2_reload = pc->pit[2].reload;
-    }
-}
-
 static int32_t pit_period(const PitChannel *ch)
 {
     return ch->reload ? ch->reload : 0x10000;
@@ -134,7 +163,7 @@ static void pit_write(Pc *pc, uint16_t port, uint8_t v)
         ch->count = pit_period(ch);
         ch->loaded = true;
         if (port == 0x42)
-            speaker_log(pc);
+            pc_speaker_log(pc);
     }
 }
 
@@ -199,15 +228,6 @@ static void pit_advance(Pc *pc, uint32_t cpu_cycles)
 
 /* ---- keyboard ------------------------------------------------------------------- */
 
-void pc_key_event(Pc *pc, uint8_t scancode)
-{
-    int next = (pc->kbd_tail + 1) % PC_KBD_QUEUE;
-    if (next == pc->kbd_head)
-        return;
-    pc->kbd_queue[pc->kbd_tail] = scancode;
-    pc->kbd_tail = next;
-}
-
 static void kbd_poll(Pc *pc)
 {
     if (pc->kbd_full || pc->kbd_head == pc->kbd_tail || pc->cpu.cycles < pc->kbd_next_cycle)
@@ -220,19 +240,6 @@ static void kbd_poll(Pc *pc)
 }
 
 /* ---- port I/O ----------------------------------------------------------------- */
-
-static uint8_t cga_status(Pc *pc)
-{
-    uint32_t pos = (uint32_t)(pc->cpu.cycles % CGA_FRAME_CYCLES);
-    uint32_t line = pos / CGA_LINE_CYCLES;
-    uint32_t col = pos % CGA_LINE_CYCLES;
-    uint8_t s = 0;
-    if (line >= 200 || col >= 240)
-        s |= 0x01;
-    if (line >= 224 && line < 240)
-        s |= 0x08;
-    return s;
-}
 
 static uint8_t port_in(void *ctx, uint16_t port)
 {
@@ -256,7 +263,7 @@ static uint8_t port_in(void *ctx, uint16_t port)
     case 0x3D5:
         return pc->crtc[pc->crtc_index & 31];
     case 0x3DA:
-        return cga_status(pc);
+        return pc_cga_status(pc);
     case 0x3F4: /* FDC main status: ready */
         return 0x80;
     default:
@@ -277,7 +284,7 @@ static void port_out(void *ctx, uint16_t port, uint8_t v)
     case 0x61:
         if (v != pc->port61) {
             pc->port61 = v;
-            speaker_log(pc);
+            pc_speaker_log(pc);
         }
         break;
     case 0x3D4:
@@ -559,12 +566,37 @@ static void hle(void *ctx, uint8_t n)
     }
 }
 
+#endif /* FS1_EMULATOR */
+
 /* ---- machine ------------------------------------------------------------------- */
+
+static void bda_put8(Pc *pc, uint16_t off, uint8_t v) { pc->mem[BDA + off] = v; }
+static void bda_put16(Pc *pc, uint16_t off, uint16_t v)
+{
+    pc->mem[BDA + off] = (uint8_t)v;
+    pc->mem[BDA + off + 1] = (uint8_t)(v >> 8);
+}
+
+/* Text mode 3, as the BIOS leaves it at power-on (cga_set_mode(3) of the HLE). */
+static void text_mode_3(Pc *pc)
+{
+    pc->cga_mode = 0x29;
+    pc->cga_color = 0x30;
+    bda_put8(pc, 0x49, 3);
+    bda_put16(pc, 0x4A, 80);
+    bda_put8(pc, 0x65, pc->cga_mode);
+    bda_put8(pc, 0x66, pc->cga_color);
+    for (int i = 0; i < 0x4000; i += 2) {
+        pc->mem[0xB8000 + i] = ' ';
+        pc->mem[0xB8000 + i + 1] = 0x07;
+    }
+}
 
 /* Power-on state: clears RAM and all devices but keeps the disk, display settings,
  * font and the running cycle count (so timing and audio stay continuous). */
-static void pc_power_on(Pc *pc)
+void pc_power_on(Pc *pc)
 {
+    bool csched = pc->csched;
     uint8_t *mem = pc->mem;
     Disk *disk = pc->disk;
     bool composite = pc->composite;
@@ -579,12 +611,12 @@ static void pc_power_on(Pc *pc)
     pc->mem = mem;
     pc->disk = disk;
     pc->composite = composite;
+    pc->csched = csched;
     SDL_memcpy(pc->font, font, sizeof font);
 
     Cpu8086 *c = &pc->cpu;
     c->mem = pc->mem;
     c->rom_start = 0xF0000;
-    c->bus = (CpuBus){ pc, port_in, port_out, hle };
     cpu_reset(c);
 
     /* Fake BIOS ROM: one HLE stub per interrupt vector. */
@@ -606,11 +638,11 @@ static void pc_power_on(Pc *pc)
     pc->mem[0xFFFFE] = 0xFF;
 
     /* BIOS data area */
-    bda_set16(pc, 0x10, 0x0021); /* 1 floppy, 80x25 colour */
-    bda_set16(pc, 0x13, 640);
-    bda_set16(pc, 0x1A, 0x1E);
-    bda_set16(pc, 0x1C, 0x1E);
-    bda_set16(pc, 0x63, 0x3D4);
+    bda_put16(pc, 0x10, 0x0021); /* 1 floppy, 80x25 colour */
+    bda_put16(pc, 0x13, 640);
+    bda_put16(pc, 0x1A, 0x1E);
+    bda_put16(pc, 0x1C, 0x1E);
+    bda_put16(pc, 0x63, 0x3D4);
 
     /* PIC as the BIOS leaves it: vectors 08h-0Fh, IRQ 0, 1, 6 enabled */
     pc->pic_vector = 0x08;
@@ -620,7 +652,7 @@ static void pc_power_on(Pc *pc)
     pc->pit[0] = (PitChannel){ .reload = 0, .count = 0x10000, .mode = 3, .access = 3, .loaded = true };
     pc->pit[2] = (PitChannel){ .reload = 0x0533, .count = 0x533, .mode = 3, .access = 3, .loaded = true };
 
-    cga_set_mode(pc, 3);
+    text_mode_3(pc);
     c->cycles = cycles;
     c->trace = trace;
     c->hook_map = hooks.hook_map;
@@ -630,11 +662,23 @@ static void pc_power_on(Pc *pc)
     c->write_log = hooks.write_log;
     pc->speaker_slice_start = cycles;
     pc->kbd_next_cycle = cycles;
+#ifdef FS1_EMULATOR
+    if (!csched)
+        c->bus = (CpuBus){ pc, port_in, port_out, hle };
+    else
+#endif
+        sched_attach(pc);
 }
 
-bool pc_init(Pc *pc, Disk *disk)
+bool pc_init(Pc *pc, Disk *disk, bool csched)
 {
     SDL_memset(pc, 0, sizeof *pc);
+#ifdef FS1_EMULATOR
+    pc->csched = csched;
+#else
+    (void)csched;
+    pc->csched = true;
+#endif
     pc->mem = SDL_calloc(1, CPU_MEM_SIZE);
     if (!pc->mem)
         return false;
@@ -652,6 +696,11 @@ void pc_free(Pc *pc)
 
 void pc_boot(Pc *pc)
 {
+    if (pc->csched) {
+        sched_boot(pc);
+        return;
+    }
+#ifdef FS1_EMULATOR
     const uint8_t *boot = disk_sector(pc->disk, 0, 0);
     SDL_memcpy(pc->mem + 0x7C00, boot, (size_t)pc->disk->sector_size);
     Cpu8086 *c = &pc->cpu;
@@ -664,18 +713,28 @@ void pc_boot(Pc *pc)
     c->ip = 0x7C00;
     c->flags = 0xF202;
     c->halted = false;
+#endif
 }
 
 void pc_sync_pit(Pc *pc)
 {
+#ifdef FS1_EMULATOR
+    if (pc->csched)
+        return; /* nothing counts down */
     uint64_t now = pc->cpu.cycles;
     if (now > pc->pit_synced)
         pit_advance(pc, (uint32_t)(now - pc->pit_synced));
     pc->pit_synced = now;
+#else
+    (void)pc;
+#endif
 }
 
 uint64_t pc_irq_horizon(const Pc *pc)
 {
+    if (pc->csched)
+        return sched_horizon(pc);
+#ifdef FS1_EMULATOR
     uint64_t now = pc->cpu.cycles;
     if (pc->pic_irr || pc->irq0_backlog)
         return 0;
@@ -694,10 +753,18 @@ uint64_t pc_irq_horizon(const Pc *pc)
             h = l;
     }
     return h;
+#else
+    return 0;
+#endif
 }
 
 void pc_run(Pc *pc, uint64_t target)
 {
+    if (pc->csched) {
+        sched_run(pc, target);
+        return;
+    }
+#ifdef FS1_EMULATOR
     Cpu8086 *c = &pc->cpu;
     pc->run_target = target;
     while (c->cycles < target) {
@@ -715,6 +782,7 @@ void pc_run(Pc *pc, uint64_t target)
         pc_sync_pit(pc);
         kbd_poll(pc);
     }
+#endif
 }
 
 /* ---- CGA rendering ---------------------------------------------------------------- */

@@ -67,7 +67,7 @@ static uint64_t run_steps(Pc *pc, bool hooks)
     if (!hooks)
         c->hook_map = NULL;
     for (long n = 0; n < 5000000L; n++) {
-        cpu_step(c);
+        native_or_cpu_step(pc);
         uint16_t d = (uint16_t)(c->regs[R_SP] - sp0);
         if (c->ip == ret_ip && c->sregs[S_CS] == ret_cs && d >= 2 && d < 0x8000)
             break;
