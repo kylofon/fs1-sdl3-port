@@ -17,3 +17,4 @@ NATIVE_AREA(flight_motion)   /* 3.14 flight model: integration and environment *
 NATIVE_AREA(editor)          /* 3.16 editor, presets, menus */
 NATIVE_AREA(war)             /* 3.17 war mode */
 NATIVE_AREA(keys)            /* 3.18 keyboard and controls */
+NATIVE_AREA(sound)           /* 3.19 sound */

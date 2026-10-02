@@ -415,18 +415,26 @@
  *   0412 time_of_day            word    [code] 1 day, 2 dusk, 4 night
  *   0416 overlay_fill           word    [code] fill byte for view_overlay_marks, set by scenery?
  *   0418 enter_unhooks          byte    [code] nonzero: Enter restores the BIOS int 8/9 vectors and the PIT (0 in all traces)
+ *   0419 scenery_loading        byte    [code] 1 while a scenery area streams from disk (0414-045C); the timer handler skips atis_tick
  *   041D blink_bits             word    [code] rotated every frame; scenery tests it for flashing lights
  *   041F horizon_list           table   [code] captured horizon points, FE,x,y records
  *   0449 area_bounds            table   [code] 8 bytes per area: N min/max, E min/max; FFFF ends
  *   0481 crash_messages         table   [code] message pointers by crash_code
+ *   0542 atis_accum             byte    [code] += comm_rate every 36.4 Hz slow tick; carry -> atis_tick
  *   0543 spk_pattern            word    [code] rotating speaker bit pattern (engine sound)
+ *   0545 spk_reload             word    [code] engine pattern copied to spk_pattern on restart: engine_sound (sound_update state 0) or 9 (guns, state 3)
  *   0547 spk_restart            byte    [code] 1 from editor_apply_state: the timer handler restarts the engine note once (sound on)
  *   0548 sound_state            byte    [code] index into the sound_update table
+ *   0549 ff_ticks               word    [code] +1 per flight_forces call (6.07 Hz)
  *   054B pit_accum              word    [code] accumulates the PIT divisor; carries at 36.4 Hz
  *   054D clock_frac             word    [code] +0E11h per 18.2 Hz tick = 1 s per carry
  *   054F clock_sec              byte
+ *   0550 sec_ticks              byte    [code] +1 per game second (with clock_sec)
  *   0551 key_recent             byte    [code] 18.2 Hz ticks left: 12h after C/N/T, 8 after KP8/KP2, 0 after -/=, counted down at 07F8; nonzero: C/N/T pick the next field, elevator steps 8x
  *   0553 tick18                 word    [code] 18.2 Hz tick counter
+ *   0555 tick_phase             byte    [code] toggled every 36.4 Hz slow tick; the 18.2 Hz part runs when it becomes 0
+ *   0556 ff_divider             byte    [code] counts 3..1 per 18.2 Hz tick: flight_forces and demo_step when it reaches 0
+ *   0559 sound_table            table   [code] 9 near handler addresses for sound_update, by sound_state: 0 engine, 1 stall horn, 3 guns, 4 bomb, 8 touchdown, 2/5/6/7 none
  *   0571 demo_ptr               word    [code] current demo-script byte
  *   0586 radar_zoom             dword   [key] shifted by -/= when selected_item = 2
  *   058A last_scancodes         word    [code] Ctrl+Alt+Del detection
@@ -1617,18 +1625,26 @@ static inline void gs_set_backup_option(Pc *pc, uint8_t v) { gs_wr8(pc, GS_BACKU
 #define GS_TIME_OF_DAY 0x0412
 #define GS_OVERLAY_FILL 0x0416
 #define GS_ENTER_UNHOOKS 0x0418
+#define GS_SCENERY_LOADING 0x0419
 #define GS_BLINK_BITS 0x041D
 #define GS_HORIZON_LIST 0x041F
 #define GS_AREA_BOUNDS 0x0449
 #define GS_CRASH_MESSAGES 0x0481
+#define GS_ATIS_ACCUM 0x0542
 #define GS_SPK_PATTERN 0x0543
+#define GS_SPK_RELOAD 0x0545
 #define GS_SPK_RESTART 0x0547
 #define GS_SOUND_STATE 0x0548
+#define GS_FF_TICKS 0x0549
 #define GS_PIT_ACCUM 0x054B
 #define GS_CLOCK_FRAC 0x054D
 #define GS_CLOCK_SEC 0x054F
+#define GS_SEC_TICKS 0x0550
 #define GS_KEY_RECENT 0x0551
 #define GS_TICK18 0x0553
+#define GS_TICK_PHASE 0x0555
+#define GS_FF_DIVIDER 0x0556
+#define GS_SOUND_TABLE 0x0559
 #define GS_DEMO_PTR 0x0571
 #define GS_RADAR_ZOOM 0x0586
 #define GS_LAST_SCANCODES 0x058A
@@ -1685,6 +1701,8 @@ static inline uint16_t gs_overlay_fill(Pc *pc) { return (uint16_t)gs_rd16(pc, GS
 static inline void gs_set_overlay_fill(Pc *pc, uint16_t v) { gs_wr16(pc, GS_OVERLAY_FILL, (uint16_t)v); }
 static inline uint8_t gs_enter_unhooks(Pc *pc) { return gs_rd8(pc, GS_ENTER_UNHOOKS); }
 static inline void gs_set_enter_unhooks(Pc *pc, uint8_t v) { gs_wr8(pc, GS_ENTER_UNHOOKS, v); }
+static inline uint8_t gs_scenery_loading(Pc *pc) { return gs_rd8(pc, GS_SCENERY_LOADING); }
+static inline void gs_set_scenery_loading(Pc *pc, uint8_t v) { gs_wr8(pc, GS_SCENERY_LOADING, v); }
 static inline uint16_t gs_blink_bits(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_BLINK_BITS); }
 static inline void gs_set_blink_bits(Pc *pc, uint16_t v) { gs_wr16(pc, GS_BLINK_BITS, (uint16_t)v); }
 static inline uint8_t gs_horizon_list_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_HORIZON_LIST + i)); }
@@ -1699,22 +1717,38 @@ static inline uint8_t gs_crash_messages_b(Pc *pc, unsigned i) { return gs_rd8(pc
 static inline uint16_t gs_crash_messages_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_CRASH_MESSAGES + 2 * i)); }
 static inline void gs_set_crash_messages_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_CRASH_MESSAGES + i), v); }
 static inline void gs_set_crash_messages_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_CRASH_MESSAGES + 2 * i), v); }
+static inline uint8_t gs_atis_accum(Pc *pc) { return gs_rd8(pc, GS_ATIS_ACCUM); }
+static inline void gs_set_atis_accum(Pc *pc, uint8_t v) { gs_wr8(pc, GS_ATIS_ACCUM, v); }
 static inline uint16_t gs_spk_pattern(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_SPK_PATTERN); }
 static inline void gs_set_spk_pattern(Pc *pc, uint16_t v) { gs_wr16(pc, GS_SPK_PATTERN, (uint16_t)v); }
+static inline uint16_t gs_spk_reload(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_SPK_RELOAD); }
+static inline void gs_set_spk_reload(Pc *pc, uint16_t v) { gs_wr16(pc, GS_SPK_RELOAD, (uint16_t)v); }
 static inline uint8_t gs_spk_restart(Pc *pc) { return gs_rd8(pc, GS_SPK_RESTART); }
 static inline void gs_set_spk_restart(Pc *pc, uint8_t v) { gs_wr8(pc, GS_SPK_RESTART, v); }
 static inline uint8_t gs_sound_state(Pc *pc) { return gs_rd8(pc, GS_SOUND_STATE); }
 static inline void gs_set_sound_state(Pc *pc, uint8_t v) { gs_wr8(pc, GS_SOUND_STATE, v); }
+static inline uint16_t gs_ff_ticks(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_FF_TICKS); }
+static inline void gs_set_ff_ticks(Pc *pc, uint16_t v) { gs_wr16(pc, GS_FF_TICKS, (uint16_t)v); }
 static inline uint16_t gs_pit_accum(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_PIT_ACCUM); }
 static inline void gs_set_pit_accum(Pc *pc, uint16_t v) { gs_wr16(pc, GS_PIT_ACCUM, (uint16_t)v); }
 static inline uint16_t gs_clock_frac(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_CLOCK_FRAC); }
 static inline void gs_set_clock_frac(Pc *pc, uint16_t v) { gs_wr16(pc, GS_CLOCK_FRAC, (uint16_t)v); }
 static inline uint8_t gs_clock_sec(Pc *pc) { return gs_rd8(pc, GS_CLOCK_SEC); }
 static inline void gs_set_clock_sec(Pc *pc, uint8_t v) { gs_wr8(pc, GS_CLOCK_SEC, v); }
+static inline uint8_t gs_sec_ticks(Pc *pc) { return gs_rd8(pc, GS_SEC_TICKS); }
+static inline void gs_set_sec_ticks(Pc *pc, uint8_t v) { gs_wr8(pc, GS_SEC_TICKS, v); }
 static inline uint8_t gs_key_recent(Pc *pc) { return gs_rd8(pc, GS_KEY_RECENT); }
 static inline void gs_set_key_recent(Pc *pc, uint8_t v) { gs_wr8(pc, GS_KEY_RECENT, v); }
 static inline uint16_t gs_tick18(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_TICK18); }
 static inline void gs_set_tick18(Pc *pc, uint16_t v) { gs_wr16(pc, GS_TICK18, (uint16_t)v); }
+static inline uint8_t gs_tick_phase(Pc *pc) { return gs_rd8(pc, GS_TICK_PHASE); }
+static inline void gs_set_tick_phase(Pc *pc, uint8_t v) { gs_wr8(pc, GS_TICK_PHASE, v); }
+static inline uint8_t gs_ff_divider(Pc *pc) { return gs_rd8(pc, GS_FF_DIVIDER); }
+static inline void gs_set_ff_divider(Pc *pc, uint8_t v) { gs_wr8(pc, GS_FF_DIVIDER, v); }
+static inline uint8_t gs_sound_table_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_SOUND_TABLE + i)); }
+static inline uint16_t gs_sound_table_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_SOUND_TABLE + 2 * i)); }
+static inline void gs_set_sound_table_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_SOUND_TABLE + i), v); }
+static inline void gs_set_sound_table_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_SOUND_TABLE + 2 * i), v); }
 static inline uint16_t gs_demo_ptr(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_DEMO_PTR); }
 static inline void gs_set_demo_ptr(Pc *pc, uint16_t v) { gs_wr16(pc, GS_DEMO_PTR, (uint16_t)v); }
 static inline uint32_t gs_radar_zoom(Pc *pc) { return (uint32_t)gs_rd32(pc, GS_RADAR_ZOOM); }
