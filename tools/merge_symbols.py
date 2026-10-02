@@ -1,6 +1,10 @@
 """Merge symbol lines proposed in docs/subphases/3.*.md into docs/symbols.txt.
 
-usage: python tools/merge_symbols.py [--dry-run] [NOTES...]   (default: all notes files)
+usage: python tools/merge_symbols.py [--dry-run] [--replace] [NOTES...]   (default: all notes files)
+
+By default only symbols at new addresses are added. Since 3.15, docs/symbols.txt is curated
+directly (and generates src/game/state.h), so older notes must not overwrite it; pass
+--replace to let a notes file correct existing entries.
 
 Lines in the notes that use symbols.txt syntax (`code SEG:OFF name ...` / `var SEG:OFF name ...`)
 are merged by address: an existing entry at the same kind and address is replaced in place
@@ -49,7 +53,7 @@ def main():
                 skipped += 1
                 continue
             if k in index:
-                if lines[index[k]].strip() != l:
+                if "--replace" in sys.argv and lines[index[k]].strip() != l:
                     names.pop(LINE.match(lines[index[k]]).group(4), None)
                     lines[index[k]] = l
                     replaced += 1
