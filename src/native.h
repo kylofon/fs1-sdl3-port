@@ -55,6 +55,14 @@ void native_list(void);
 void native_verify_summary(void);
 void native_shutdown(void);
 
+/* Calls another native's C implementation from inside a native, as a near CALL would:
+ * the caller has already pushed the return address, the callee's RET pops it, and the
+ * callee's cycles are charged. Returns false (and does nothing) when no native is enabled
+ * at GAME_CS:off or while --verify is stepping original code; the caller must then run
+ * the original routine itself. Under --verify the callee's writes are part of the outer
+ * native's write log, so nested calls are checked as one unit with their caller. */
+bool native_call(Pc *pc, uint16_t off);
+
 /* ---- helpers for native routines -------------------------------------------- */
 
 static inline uint16_t mem_read16(Pc *pc, uint16_t seg, uint16_t off)

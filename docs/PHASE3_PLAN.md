@@ -73,7 +73,7 @@ Symbols from the notes are merged with `python tools/merge_symbols.py`.
 
 ## How to add a native (framework from 3.0)
 
-The registry is the `entries[]` table in `src/native.c`; helpers are in `src/native.h`.
+Natives live in `src/natives/<area>.c` (one table per area, see [subphases/README.md](subphases/README.md)); helpers are in `src/native.h`.
 
 1. Write `static void n_NAME(Pc *pc)`. It reads and writes `pc->cpu` registers and game memory
    (`ds_read16`/`ds_write16` for DS=0618, `mem_read16`/`mem_write16` for any segment; they go through
@@ -85,7 +85,10 @@ The registry is the `entries[]` table in `src/native.c`; helpers are in `src/nat
 3. `.cycles` is what one call charges to the emulated clock (default `NATIVE_CALL_CYCLES` = 100). Set it to
    the original's cost so the timeline and screenshots stay identical; `--verify` prints the measured
    range (`original-cycles MIN..MAX`). For routines whose cost varies, timing-dependent details may differ.
-4. Run `python tools/verify_campaign.py NAME` (or no argument for all). It must print `OK`.
+4. To call another routine from a native: push the return address, then `native_call(pc, OFF)` runs that
+   routine's native directly (its cycles are charged; under `--verify` it is checked as part of the
+   caller). If it returns false, run the original instead (see `panel.h` for emulating a CALL).
+5. Run `python tools/verify_campaign.py NAME` (or no argument for all). It must print `OK`.
    Compare screenshots with `--native-off NAME` against the default.
 
 The dispatch costs nothing while no native is enabled: `cpu_step` checks `hook_map` (NULL then), and
