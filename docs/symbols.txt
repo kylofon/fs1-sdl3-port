@@ -206,12 +206,20 @@ var 0618:041F horizon_list table     ; [code] captured horizon points, FE,x,y re
 var 0618:0449 area_bounds table      ; [code] 8 bytes per area: N min/max, E min/max; FFFF ends
 var 0618:0481 crash_messages table   ; [code] message pointers by crash_code
 var 0618:0540 bomb_whistle word      ; [code] rising PIT ch2 tone while a bomb falls
+var 0618:0419 scenery_loading byte   ; [code] 1 while a scenery area streams from disk (0414-045C); the timer handler skips atis_tick
+var 0618:0542 atis_accum byte        ; [code] += comm_rate every 36.4 Hz slow tick; carry -> atis_tick
 var 0618:0543 spk_pattern word       ; [code] rotating speaker bit pattern (engine sound)
+var 0618:0545 spk_reload word        ; [code] engine pattern copied to spk_pattern on restart: engine_sound (sound_update state 0) or 9 (guns, state 3)
 var 0618:0548 sound_state byte       ; [code] index into the sound_update table
 var 0618:054B pit_accum word         ; [code] accumulates the PIT divisor; carries at 36.4 Hz
 var 0618:054D clock_frac word        ; [code] +0E11h per 18.2 Hz tick = 1 s per carry
+var 0618:0549 ff_ticks word          ; [code] +1 per flight_forces call (6.07 Hz)
 var 0618:054F clock_sec byte
+var 0618:0550 sec_ticks byte         ; [code] +1 per game second (with clock_sec)
 var 0618:0553 tick18 word            ; [code] 18.2 Hz tick counter
+var 0618:0555 tick_phase byte        ; [code] toggled every 36.4 Hz slow tick; the 18.2 Hz part runs when it becomes 0
+var 0618:0556 ff_divider byte        ; [code] counts 3..1 per 18.2 Hz tick: flight_forces and demo_step when it reaches 0
+var 0618:0559 sound_table table      ; [code] 9 near handler addresses for sound_update, by sound_state: 0 engine, 1 stall horn, 3 guns, 4 bomb, 8 touchdown, 2/5/6/7 none
 var 0618:0573 aileron word           ; [key]
 var 0618:0575 bomb_state word        ; [code] nonzero while a bomb falls
 var 0618:0577 carb_heat byte         ; [key]
