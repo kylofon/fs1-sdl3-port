@@ -183,10 +183,10 @@ code 0050:3B36 editor_apply_state    ; [code] editor_values -> live state
 
 # ---- war mode ----------------------------------------------------------------------------------------------
 code 0050:3020 war_frame             ; [code] per frame when war_mode: status, guns, bombs, 3 enemies
-code 0050:30AB war_enemy_update      ; [code] enemy AI and drawing?
-code 0050:344F war_guns              ; [code]?
-code 0050:3521 war_bomb_fall         ; [code]?
-code 0050:3595 war_ammo_dec          ; [code]?
+code 0050:30AB war_enemy_update      ; [code] BX = enemy record (29 bytes): steer, fire, evade, draw
+code 0050:344F war_guns              ; [code] bullets 1EE6..1F39, kills enemies with [+A] set
+code 0050:3521 war_bomb_fall         ; [code] [0575] -= 32h; on landing scores [1E53]
+code 0050:3595 war_ammo_dec          ; [code] ammo - 1, digits to 1ED3
 
 # ---- variables in DS=0618 -------------------------------------------------------------------------------
 var 0618:03B3 disk_track byte        ; [code] track for boot_read_track
@@ -268,7 +268,7 @@ var 0618:1E29 wind_dy word           ; [code]?
 var 0618:1E51 ammo word              ; [code]? re-armed to 65h on the ground
 var 0618:1E5A war_status_line byte   ; [key]
 var 0618:1EE1 bombs_left byte        ; [code] ASCII digit
-var 0618:1F3B enemy_table table      ; [code] 3 x 29-byte records?
+var 0618:1F3B enemy_table table      ; [code] 6 x 29 bytes (enemy_table+9.. names inside 5060..5467 are not these)
 var 0618:2015 editor_row byte
 var 0618:2017 editor_page byte
 var 0618:2034 demo_mode byte         ; [code]
@@ -407,7 +407,7 @@ code 0050:0742 field_elev_follow     ; [code] [0906] = field_elevation when slow
 code 0050:25D4 marker_lamps          ; [code] shifts out marker flags 1A17/1A1B/1A19
 var 0618:03F2 com_bcd word           ; [code] tuned COM, BCD (124.85 -> 2485h)
 var 0618:03FF nav_bcd word           ; [code] tuned NAV, BCD (109.15 -> 0915h)
-var 0618:0406 war_reset byte         ; [code] 1 re-arm when stopped, 2 also reload ammo/bombs
+var 0618:0406 ground_service byte    ; [code] scenery: 1 ramp, 2 war home field
 var 0618:0412 time_of_day word       ; [code] 1 day, 2 dusk, 4 night
 var 0618:0416 overlay_fill word      ; [code] fill byte for view_overlay_marks, set by scenery?
 var 0618:041D blink_bits word        ; [code] rotated every frame; scenery tests it for flashing lights
@@ -423,7 +423,7 @@ var 0618:1A1D ils_param word         ; [code] set by scenery after an ILS statio
 var 0618:1A1F ils_course word        ; [code] localizer course, set by scenery
 var 0618:1D4A ground_pattern word    ; [code] BBBBh by day
 var 0618:1E24 utc_offset word        ; [code] hours, set per area (ATIS Zulu time)
-var 0618:1E53 bomb_score word        ; [code] set by war-area scenery, read by war_bomb_fall?
+var 0618:1E53 bomb_score word        ; [code] scenery, while over a target
 var 0618:30C6 capture_ptr word       ; [code] next capture record
 var 0618:30DD scenery_scale byte     ; [code] op 24 shift selector 0/2/4/6/8
 var 0618:30DF scenery_origin table   ; [code] east, up, north dwords (16.16)
@@ -503,11 +503,11 @@ var 0618:08AA inv_airspeed word      ; [code] div_q15(0280:0000, airspeed)
 var 0618:08AC pitch_accel word
 var 0618:08B0 accel_to_pitch word
 var 0618:0558 stalled byte           ; [code] write only
-var 0618:1E83 wing_damage byte       ; [code] 1 = left wing gone (war)
+var 0618:1E83 wing_damage byte
 
 
 # ---- from docs/subphases/3.14.md --------------------
-code 0050:1BB0 war_rearm             ; [code] magnetos OK, tanks 23h, faults 0, panel masks, enemy records
+code 0050:1BB0 war_ground_reset      ; [code] repair, refuel, enemies to state 1
 code 0050:1CEC slew_to_editor_pos    ; [code] pos_north/east integer + 4000h -> 2050/2052
 code 0050:1CFF slew_speed            ; [code] control word -> 2^n-1 style speed, AX, DX = sign
 code 0050:2EDB engine_stop           ; [code] 1DD6 = 0, 1DCB = 0, running = 0
@@ -620,3 +620,27 @@ var 0618:3624 atis_ring_b word       ; [code]
 var 0618:3629 atis_idle_count byte   ; [code]
 var 0618:362A atis_in_fragment byte  ; [code]
 var 0618:362B atis_frag_ptr word     ; [code]
+
+
+# ---- from docs/subphases/3.17.md --------------------
+code 0050:3308 war_scope_clear       ; [code] clears the panel scope B800:17A8 (22x23 bytes) and its centre mark
+code 0050:33C2 war_status            ; [code] status line; BEGIN WAR!! and its pause
+code 0050:3575 war_score_add         ; [code] AX added to score [1E57], digits to 1EC5
+code 0050:326A enemy_delta_home      ; [code] SI = home position; delta to 1E6F..1E77
+code 0050:327F enemy_delta_player    ; [code]
+code 0050:32CB enemy_distance        ; [code] CX:BP = |dE|+|dA|+|dN|
+code 0050:334A enemy_scope_mark      ; [code] enemy dot on the panel scope, [BX+9]
+code 0050:35AB war_explosion         ; [code] CL dots, colour [1E55], offsets from DS:0830
+code 0050:35DB war_damage            ; [code] damage by hits [1E5C] and kills [1E50]
+code 0050:5BAA enemy_sprite          ; [code] AH = x, CL = y, SI = size*2; sprites via table DS:3A10
+code 0050:5C63 cga_line_up           ; [code] BX one line up in the interleave
+var 0618:1E50 kills byte
+var 0618:1E55 explosion_colour word
+var 0618:1E57 score word
+var 0618:1E59 war_active byte
+var 0618:1E5C hits_taken byte
+var 0618:1E78 enemy_fire byte
+var 0618:1E7A in_range_msg byte
+var 0618:1E7C gun_burst byte
+var 0618:1E81 bullet_timer byte
+var 0618:1E82 status_msg byte
