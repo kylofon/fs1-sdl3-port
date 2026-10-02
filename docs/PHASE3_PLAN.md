@@ -38,9 +38,10 @@ Symbols from the notes are merged with `python tools/merge_symbols.py`.
 | 3.8 | merged | #9 | [3.8](subphases/3.8.md) |
 | 3.9 | merged | #8 | [3.9](subphases/3.9.md) |
 | 3.14 | merged | #11 | [3.14](subphases/3.14.md) |
+| 3.11 | merged | #12 | [3.11](subphases/3.11.md) |
 | 3.13 | merged | #10 | [3.13](subphases/3.13.md) |
 | 3.10 | merged | #7 | [3.10](subphases/3.10.md) |
-| 3.5, 3.11, 3.12, 3.17 | in progress | | |
+| 3.5, 3.12, 3.17 | in progress | | |
 
 ## Subphases
 
