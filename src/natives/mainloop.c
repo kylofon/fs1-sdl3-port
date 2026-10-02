@@ -67,7 +67,14 @@ static uint32_t rep_stos(uint16_t a, uint16_t cx) { return ins_at(a)->cost - 20u
 /* The step may go on for n more cycles (see the header). Under --verify always. */
 static bool fits(Pc *pc, uint64_t n)
 {
-    return native_logged(pc) || n < pc_irq_horizon(pc);
+    return native_logged(pc) || pc->csched || n < pc_irq_horizon(pc);
+}
+
+/* For the loops: the horizon, but under the C scheduler (3.22) at least one pass, since
+ * there is no original code to decline to (interrupts come between the steps). */
+static bool past(Pc *pc, uint64_t n, uint64_t h, bool any)
+{
+    return n >= h && (any || !pc->csched);
 }
 
 static void finish(Pc *pc, uint64_t cycles)
@@ -504,7 +511,7 @@ static bool n_view_frame_loop(Pc *pc)
     for (;;) {
         bool more = (int16_t)(bx - 0x50) >= 0;
         uint64_t c = pass + (more ? jump(0x5AD4) : fall(0x5AD4));
-        if (cyc + c >= h)
+        if (past(pc, cyc + c, h, any))
             break;
         uint32_t a = cpu_linear(es, bx), b = cpu_linear(es, (uint16_t)(bx + 0x2000));
         cpu_write8(&pc->cpu, a, (uint8_t)(cpu_read8(&pc->cpu, a) | al));
@@ -543,7 +550,7 @@ static bool n_overlay_rows(Pc *pc)
         uint16_t ndx = (uint16_t)(dx + ystep), nsi = (uint16_t)(si + xstep);
         uint16_t ncx = (uint16_t)(nsi >> 8);
         uint64_t c = row_cyc + rep_stos(0x071D, ncx) + (bp != 1 ? jump(0x0720) : fall(0x0720));
-        if (cyc + c >= h)
+        if (past(pc, cyc + c, h, any))
             break;
         dx = ndx;
         si = nsi;
@@ -585,7 +592,7 @@ static bool n_crash_delay(Pc *pc)
     bool any = false;
     for (;;) {
         uint64_t c = pass + (cx == 1 ? fall(0x0642) : jump(0x0642));
-        if (cyc + c >= h)
+        if (past(pc, cyc + c, h, any))
             break;
         for (int k = 0; k < 3; k++)
             ax = (uint16_t)((uint8_t)ax * (uint8_t)cx);
@@ -622,6 +629,8 @@ static bool key_wait(Pc *pc, uint16_t head)
     } else {
         uint32_t pass = fall(head) + fall(at_or) + jump(at_jns);
         uint64_t h = native_logged(pc) ? (uint64_t)pass + 1 : pc_irq_horizon(pc);
+        if (pc->csched && h <= pass)
+            h = (uint64_t)pass + 1;
         if (pass >= h)
             return false;
         cyc = (uint64_t)pass * ((h - 1) / pass); /* whole passes before the next interrupt */

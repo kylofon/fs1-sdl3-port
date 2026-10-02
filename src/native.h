@@ -68,6 +68,16 @@ void native_shutdown(void);
 /* Sum of the calls of every entry (for --stats). */
 uint64_t native_total_calls(void);
 
+/* For the C scheduler (3.22): runs the enabled native at CS:IP as one step (as the CPU's
+ * pre-execution hook would). False when there is none, or it declined. */
+bool native_step(Pc *pc);
+
+/* What a native's "run the original" helper performs per step (3.22): with the C scheduler,
+ * the enabled native at CS:IP if there is one, else (and always in the emulator) one
+ * original instruction (cpu_step; fatal in the default build, which has no interpreter).
+ * Returns the cycles used. */
+int native_or_cpu_step(Pc *pc);
+
 /* Calls another native's C implementation from inside a native, as a near CALL would:
  * the caller has already pushed the return address, the callee's RET pops it, and the
  * callee's cycles are charged. Returns false (and does nothing) when no native is enabled

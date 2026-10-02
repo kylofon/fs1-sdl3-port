@@ -27,6 +27,11 @@
  *   --stats-from FRAME  start counting at that frame (default 0)
  *   --stats-out FILE    also write every executed address as "LINEAR COUNT" lines (for
  *                       tools/insn_stats.py, which totals them per routine)
+ *   --csched            (FS1_EMULATOR build) run with the C scheduler, as the default build does;
+ *                       original instructions are then only run where a native is missing
+ *   --emulate           (FS1_EMULATOR build) run on the emulated PC (the default of that build)
+ *   --check-boot        (FS1_EMULATOR build) compare the C boot with the original loader and exit
+ *   --verify, --trace and --native-off need the FS1_EMULATOR build (they run original code).
  *   Native options apply in command-line order.
  */
 #define SDL_MAIN_USE_CALLBACKS 1
@@ -74,6 +79,7 @@ typedef struct App {
     const char *stats_out;
     uint32_t *exec_count;
     uint64_t stats_native_calls0;
+    bool csched;
 } App;
 
 static uint8_t xt_scancode(SDL_Scancode sc)
@@ -365,16 +371,38 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         return SDL_APP_FAILURE;
     *appstate = app;
     app->speed = 1;
+#ifndef FS1_EMULATOR
+    app->csched = true;
+#endif
 
     const char *disk_path = NULL;
+    bool check_boot = false;
     for (int i = 1; i < argc; i++) {
         if (SDL_strcmp(argv[i], "--frames") == 0 && i + 1 < argc)
             app->max_frames = SDL_atoi(argv[++i]);
         else if (SDL_strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc)
             app->screenshot = argv[++i];
-        else if (SDL_strcmp(argv[i], "--trace") == 0 && i + 1 < argc)
+        else if (SDL_strcmp(argv[i], "--trace") == 0 && i + 1 < argc) {
+#ifndef FS1_EMULATOR
+            return fail("--trace needs the FS1_EMULATOR build (cmake -DFS1_EMULATOR=ON)");
+#endif
             app->trace_path = argv[++i];
-        else if (SDL_strcmp(argv[i], "--rgb") == 0)
+        }
+        else if (SDL_strcmp(argv[i], "--csched") == 0)
+            app->csched = true;
+        else if (SDL_strcmp(argv[i], "--emulate") == 0) {
+#ifdef FS1_EMULATOR
+            app->csched = false;
+#else
+            return fail("--emulate needs the FS1_EMULATOR build (cmake -DFS1_EMULATOR=ON)");
+#endif
+        } else if (SDL_strcmp(argv[i], "--check-boot") == 0) {
+#ifdef FS1_EMULATOR
+            check_boot = true;
+#else
+            return fail("--check-boot needs the FS1_EMULATOR build (cmake -DFS1_EMULATOR=ON)");
+#endif
+        } else if (SDL_strcmp(argv[i], "--rgb") == 0)
             app->start_rgb = true;
         else if (SDL_strcmp(argv[i], "--stats") == 0)
             app->stats = true;
@@ -398,6 +426,11 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         else if ((SDL_strcmp(argv[i], "--native-off") == 0 || SDL_strcmp(argv[i], "--native-on") == 0 ||
                   SDL_strcmp(argv[i], "--verify") == 0) && i + 1 < argc) {
             const char *name = argv[i + 1];
+#ifndef FS1_EMULATOR
+            if (SDL_strcmp(argv[i], "--native-on") != 0)
+                return fail("--native-off and --verify run original code: they need the FS1_EMULATOR build "
+                            "(cmake -DFS1_EMULATOR=ON)");
+#endif
             bool ok = SDL_strcmp(argv[i], "--verify") == 0 ? native_set_verify(name)
                                                            : native_set_enabled(name, argv[i][10] == 'n');
             if (!ok) {
@@ -434,11 +467,17 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         SDL_free(found);
         return r;
     }
-    SDL_Log("Booting %s", disk_path);
+    SDL_Log("Booting %s (%s)", disk_path, app->csched ? "C scheduler" : "emulated PC");
     SDL_free(found);
+#ifdef FS1_EMULATOR
+    if (check_boot)
+        return sched_check_boot(&app->disk) ? SDL_APP_SUCCESS : SDL_APP_FAILURE;
+#else
+    (void)check_boot;
+#endif
 
     app->pc = SDL_malloc(sizeof(Pc));
-    if (!app->pc || !pc_init(app->pc, &app->disk))
+    if (!app->pc || !pc_init(app->pc, &app->disk, app->csched))
         return SDL_APP_FAILURE;
     if (app->trace_path)
         app->pc->cpu.trace = SDL_calloc(1, CPU_MEM_SIZE);
@@ -542,6 +581,16 @@ static void print_stats(App *app)
     }
     SDL_Log("stats: from frame %ld: original instructions %llu, native calls %llu", app->stats_from,
             (unsigned long long)total, (unsigned long long)(native_total_calls() - app->stats_native_calls0));
+    if (app->pc->csched)
+        SDL_Log("stats: C scheduler: %llu native steps, %llu interrupts, %llu original instructions%s",
+                (unsigned long long)app->pc->sched_steps, (unsigned long long)app->pc->sched_irqs,
+                (unsigned long long)app->pc->sched_fallback,
+#ifdef FS1_EMULATOR
+                ""
+#else
+                " (no 8086 interpreter in this build)"
+#endif
+        );
     for (int i = 0; i < TOP && n[top[i]]; i++)
         SDL_Log("stats:   %05X %10u", top[i], n[top[i]]);
     if (app->stats_out) {
@@ -580,7 +629,10 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         pc->cpu.exec_count = app->exec_count;
         app->stats_native_calls0 = native_total_calls();
     }
-    if (app->target_cycles < pc->cpu.cycles - (uint64_t)(0.25 * PC_CPU_HZ) || app->target_cycles == 0)
+    /* Resync only after a real stall: one native step can be long (3.22: with the C scheduler a
+     * scenery load is one 0.3 s step), and that excess is paid back over the next frames. */
+    uint64_t stall = (uint64_t)(2.0 * PC_CPU_HZ);
+    if ((pc->cpu.cycles > stall && app->target_cycles < pc->cpu.cycles - stall) || app->target_cycles == 0)
         app->target_cycles = pc->cpu.cycles; /* resync after a stall (or the first frame) */
     app->target_cycles += (uint64_t)(seconds * PC_CPU_HZ * app->speed);
     if (pc->cpu.cycles < app->target_cycles)

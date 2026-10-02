@@ -31,7 +31,7 @@ def main():
         open(src, "w").write(ged.HARNESS)
         env = dict(os.environ)
         env["PATH"] = os.path.dirname(gcc) + os.pathsep + env.get("PATH", "")
-        subprocess.run([gcc, "-O1", "-I", os.path.join(ROOT, "src"), src, os.path.join(ROOT, "src", "cpu8086.c"),
+        subprocess.run([gcc, "-O1", "-I", os.path.join(ROOT, "src"), src, os.path.join(ROOT, "src", "cpu8086.c"), os.path.join(ROOT, "src", "cpu_core.c"),
                         "-o", exe], check=True, env=env)
         inp = "".join(f"{a:x} {(a + n) & 0xFFFF:x}\n" for a, n, _ in ins)
         r = subprocess.run([exe, ged.MEM], input=inp, capture_output=True, text=True, check=True, env=env)

@@ -69,7 +69,7 @@ static void run_original_until(Pc *pc, uint16_t ret_ip, uint16_t sp_end)
     c->hook_map = NULL;
     long n = 0;
     while (!(c->ip == ret_ip && c->sregs[S_CS] == GAME_CS && c->regs[R_SP] == sp_end)) {
-        cpu_step(c);
+        native_or_cpu_step(pc);
         if (++n == 5000000L) {
             SDL_Log("transform: nested original run did not return to %04X", ret_ip);
             break;

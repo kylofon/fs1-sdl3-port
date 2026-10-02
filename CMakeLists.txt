@@ -20,13 +20,24 @@ if(NOT SDL3_FOUND)
     FetchContent_MakeAvailable(SDL3)
 endif()
 
+# FS1_EMULATOR (3.22): also build the 8086 interpreter, the emulated PIC/PIT/ports and BIOS,
+# the original boot loader, --verify, --trace and --stats counting, for the verification tools
+# (tools/verify_campaign.py, trace_campaign.py, insn_stats.py). The default build runs the game
+# with the C scheduler only and has no interpreter.
+option(FS1_EMULATOR "Build the 8086 interpreter and emulated PC for verification" OFF)
+
 add_executable(fs1
     src/main.c
     src/disk.c
-    src/cpu8086.c
+    src/cpu_core.c
     src/pc.c
+    src/sched.c
     src/native.c
 )
+if(FS1_EMULATOR)
+    target_sources(fs1 PRIVATE src/cpu8086.c)
+    target_compile_definitions(fs1 PRIVATE FS1_EMULATOR=1)
+endif()
 # One file per native area (phase 3); new files are picked up on the next configure.
 file(GLOB NATIVE_AREA_SOURCES CONFIGURE_DEPENDS src/natives/*.c)
 target_sources(fs1 PRIVATE ${NATIVE_AREA_SOURCES})

@@ -119,7 +119,7 @@ static void run_from(Pc *pc, uint16_t target)
             done = native_call(pc, c->ip);
         if (!done) {
             c->hook_map = NULL; /* stepped here, so that no nested --verify starts */
-            cpu_step(c);
+            native_or_cpu_step(pc);
             c->hook_map = map;
         }
         uint16_t d = (uint16_t)(c->regs[R_SP] - sp0);

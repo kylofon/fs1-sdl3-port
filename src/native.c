@@ -161,12 +161,35 @@ static bool run_original(Pc *pc, const NativeEntry *e)
 }
 
 /* Runs the entry's C function; false if it declined the call. */
+/* The natives running now, innermost last, with SP at their entry (for native_or_cpu_step). */
+#define ACTIVE_MAX 64
+static struct { const NativeEntry *e; uint16_t sp; } active[ACTIVE_MAX];
+static int active_n;
+
 static bool run_native(Pc *pc, NativeEntry *e)
 {
+    bool r = true;
+    if (active_n < ACTIVE_MAX) {
+        active[active_n].e = e;
+        active[active_n].sp = pc->cpu.regs[R_SP];
+    }
+    active_n++;
     if (e->try_fn)
-        return e->try_fn(pc);
-    e->fn(pc);
-    return true;
+        r = e->try_fn(pc);
+    else
+        e->fn(pc);
+    active_n--;
+    return r;
+}
+
+/* True when e is running with SP as it is now: a native that runs its own routine as original
+ * code (a rare path it does not implement) is at its own entry. */
+static bool running_itself(const Pc *pc, const NativeEntry *e)
+{
+    for (int i = active_n < ACTIVE_MAX ? active_n : ACTIVE_MAX; i-- > 0;)
+        if (active[i].e == e && active[i].sp == pc->cpu.regs[R_SP])
+            return true;
+    return false;
 }
 
 static bool verify_call(Pc *pc, NativeEntry *e)
@@ -313,6 +336,39 @@ static bool pre_exec(void *ctx, Cpu8086 *c)
     e->calls++;
     c->cycles += e->cycles ? e->cycles : NATIVE_CALL_CYCLES;
     return true;
+}
+
+/* ---- C scheduler (3.22) ---------------------------------------------------------- */
+
+bool native_step(Pc *pc)
+{
+    Cpu8086 *c = &pc->cpu;
+    if (!c->hook_map || c->sregs[S_CS] != GAME_CS || !c->hook_map[c->ip])
+        return false;
+    return pre_exec(pc, c);
+}
+
+int native_or_cpu_step(Pc *pc)
+{
+    Cpu8086 *c = &pc->cpu;
+    if (pc->csched && !verifying && c->sregs[S_CS] == GAME_CS && hook_index[c->ip]) {
+        NativeEntry *e = entries[hook_index[c->ip] - 1];
+        if (e->enabled && !running_itself(pc, e)) {
+            const uint8_t *map = c->hook_map;
+            uint64_t start = c->cycles;
+            c->hook_map = hook_map; /* the native's own calls out see the natives */
+            bool ran = run_native(pc, e);
+            c->hook_map = map;
+            if (ran) {
+                e->calls++;
+                c->cycles += e->cycles ? e->cycles : NATIVE_CALL_CYCLES;
+                pc->sched_steps++;
+                return (int)(c->cycles - start);
+            }
+            e->declines++;
+        }
+    }
+    return cpu_step(c);
 }
 
 /* ---- setup and reporting -------------------------------------------------------- */

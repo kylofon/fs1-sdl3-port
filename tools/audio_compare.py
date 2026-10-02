@@ -1,6 +1,6 @@
 """Render the speaker audio of campaign sessions with natives on and off, and compare.
 
-usage: python tools/audio_compare.py [NAMES] [--sessions demo,flight_keys,war] [--wav DIR] [--keep DIR]
+usage: python tools/audio_compare.py [NAMES] [--sessions demo,flight_keys,war] [--wav DIR] [--keep DIR] [--csched]
 
 Builds a variant of fs1 (build/fs1_audio.exe) from the sources unchanged; only main.c is
 compiled with its SDL audio stream calls and its pc_speaker_render call renamed (-D) to shim
@@ -16,6 +16,10 @@ on any difference. The audio as played is compared too, for information: main.c 
 frame, a frame ends at the first step boundary past its cycle budget, and a native (one CPU
 step) moves that boundary, so an edge can land one sample earlier or later there. --wav DIR also writes both renderings as 16-bit WAV files for listening;
 --keep DIR keeps the raw files there.
+--csched (3.22) compares the emulated PC (all natives on) with the C scheduler instead of natives
+on/off ("off" is then the C-scheduler run). The two are not expected to be identical: with the
+C scheduler interrupts come between natives, so edges move by up to one native step; the tool
+prints how far the event streams are apart.
 
 Needs gcc and SDL3 (MSYS2 MinGW on Windows: pkg-config sdl3) and the disk image in original/.
 """
@@ -105,10 +109,10 @@ def build():
     flags = subprocess.run([pkg, "--cflags", "--libs", "sdl3"], capture_output=True, text=True, check=True,
                            env=env).stdout.split()
     src = os.path.join(ROOT, "src")
-    rest = [os.path.join(src, f) for f in ("disk.c", "cpu8086.c", "pc.c", "native.c")]
+    rest = [os.path.join(src, f) for f in ("disk.c", "cpu8086.c", "cpu_core.c", "pc.c", "sched.c", "native.c")]
     rest += [os.path.join(src, "natives", f) for f in sorted(os.listdir(os.path.join(src, "natives")))
              if f.endswith(".c")]
-    inc = ["-I", src] + [f for f in flags if f.startswith("-I")]
+    inc = ["-DFS1_EMULATOR=1", "-I", src] + [f for f in flags if f.startswith("-I")]
     with tempfile.TemporaryDirectory() as tmp:
         shim = os.path.join(tmp, "shim.c")
         open(shim, "w").write(SHIM)
@@ -124,7 +128,7 @@ def run(session, off, out_dir):
     base = os.path.join(out_dir, f"{name}_{'off' if off else 'on'}")
     cmd = [EXE, "--frames", str(frames), "--screenshot", base + ".bmp"]
     for n in off:
-        cmd += ["--native-off", n]
+        cmd += [n] if n.startswith("--") else ["--native-off", n]
     env = dict(HEADLESS_ENV)
     env["FS1_AUDIO_OUT"] = base + ".f32"
     env["FS1_EVENTS_OUT"] = base + ".events"
@@ -191,8 +195,9 @@ def main():
     ap.add_argument("--sessions", default="demo,flight_keys,war")
     ap.add_argument("--wav")
     ap.add_argument("--keep")
+    ap.add_argument("--csched", action="store_true")
     o = ap.parse_args()
-    off = o.names.split(",")
+    off = ["--csched"] if o.csched else o.names.split(",")
     want = o.sessions.split(",")
     chosen = [s for s in sessions() if s[0] in want]
     build()
@@ -221,6 +226,15 @@ def main():
               + ("identical" if rd is None else f"differs at sample {rd}"))
         print(f"{'':14s} audio as played (per-frame slices): " + ("identical" if d is None else
               f"differs from sample {d} (a frame ends at another cycle when a native is one CPU step)"))
+        if o.csched:
+            n = min(len(ea), len(eb))
+            ca = [int(x.split()[0]) for x in ea[:n]]
+            cb = [int(x.split()[0]) for x in eb[:n]]
+            same_state = sum(1 for i in range(n) if ea[i].split()[1:] == eb[i].split()[1:])
+            dev = sorted(abs(x - y) for x, y in zip(ca, cb))
+            print(f"{'':14s} emulated vs C scheduler: {len(ea)} / {len(eb)} events, {same_state} of the first {n} "
+                  f"with the same port 61h / channel 2 state, edge time difference median "
+                  f"{dev[len(dev) // 2] if dev else 0} cycles, 99th percentile {dev[len(dev) * 99 // 100] if dev else 0}")
         if o.wav:
             os.makedirs(o.wav, exist_ok=True)
             write_wav(os.path.join(o.wav, f"{s[0]}_on.wav"), ra)

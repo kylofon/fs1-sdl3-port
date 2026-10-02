@@ -122,7 +122,7 @@ static void call_scenery_interp(Pc *pc, uint16_t sp, uint16_t ret_ip)
     c->sregs[S_CS] = GAME_CS;
     c->hook_map = NULL;
     for (long n = 0; n < 5000000L; n++) {
-        cpu_step(c);
+        native_or_cpu_step(pc);
         uint16_t d = (uint16_t)(c->regs[R_SP] - (uint16_t)(sp - 2));
         if (c->ip == ret_ip && c->sregs[S_CS] == GAME_CS && d >= 2 && d < 0x8000)
             break;

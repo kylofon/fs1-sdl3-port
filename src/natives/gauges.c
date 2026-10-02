@@ -66,7 +66,7 @@ static bool step_until(Pc *pc, uint16_t stop_ip, uint16_t stop_sp)
     bool ok = false;
     c->hook_map = NULL;
     for (long n = 0; n < 5000000L; n++) {
-        cpu_step(c);
+        native_or_cpu_step(pc);
         if (c->ip == stop_ip && c->sregs[S_CS] == GAME_CS && c->regs[R_SP] == stop_sp) {
             ok = true;
             break;

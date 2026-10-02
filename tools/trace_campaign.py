@@ -13,7 +13,9 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-EXE = os.path.join(ROOT, "build", "fs1.exe" if os.name == "nt" else "fs1")
+# These tools run original code, so they need the FS1_EMULATOR build (3.22): build-emu/ by
+# default (cmake -B build-emu -DFS1_EMULATOR=ON), or the executable named by FS1_EXE.
+EXE = os.environ.get("FS1_EXE") or os.path.join(ROOT, "build-emu", "fs1.exe" if os.name == "nt" else "fs1")
 # Scripted runs never need a visible window or sound; this also makes them work on
 # headless Linux machines (cloud sessions, CI). Set FS1_SHOW=1 to watch them.
 HEADLESS_ENV = dict(os.environ)
