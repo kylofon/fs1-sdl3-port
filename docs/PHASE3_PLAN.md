@@ -40,6 +40,7 @@ Symbols from the notes are merged with `python tools/merge_symbols.py`.
 | 3.14 | merged | #11 | [3.14](subphases/3.14.md) |
 | 3.12 | merged | (rebuilt from #13) | [3.12](subphases/3.12.md) |
 | 3.21 | PR open | – | [3.21](subphases/3.21.md) |
+| 3.21 | merged | #21 | [3.21](subphases/3.21.md) |
 | 3.20 | merged | #20 | [3.20](subphases/3.20.md) |
 | 3.19 | merged | #19 | [3.19](subphases/3.19.md) |
 | 3.18 | merged | #18 | [3.18](subphases/3.18.md) |
