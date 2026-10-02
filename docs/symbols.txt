@@ -469,3 +469,38 @@ var 0000:0122 panel_copy_seg word    ; [code] segment of the clean panel copy (e
 # ---- from docs/subphases/3.9.md --------------------
 code 0050:121A fmt_signed_dec_print  ; [code] CX=8888, ES=[view_buf_seg], jumps into print_str_mask's loop (1233)
 code 0050:5CCD set_reloc_args        ; [code] ES=0618, CX=3A84 (data segment size), SI=DI=BP=0 for store_ds_for_isr
+
+
+# ---- from docs/subphases/3.13.md --------------------
+var 0618:0834 pitch_to_speed word    ; [code] pitch_rate*[08E2]>>8, added to airspeed
+var 0618:083E gear_drag word         ; [code] [08CA] gear down / [08CC] gear up
+var 0618:0840 cos_pitch word
+var 0618:0844 cos_bank word
+var 0618:0848 weight_normal word     ; [code] weight*cos(pitch)
+var 0618:084A cross_control word     ; [code] aileron/2 - rudder/2
+var 0618:084C slip_yaw word
+var 0618:084E slip_cl word           ; [code] extra left-wing CL from crossed controls
+var 0618:0850 cos2_bank word         ; [code] cos(bank)*|cos(bank)|
+var 0618:0856 lift_horiz word        ; [code] lift*sin(bank), write only
+var 0618:0862 elev_aoa word          ; [code] elevator*[08DA]
+var 0618:0864 net_force word         ; [code] thrust - drag
+var 0618:0866 flaps_drag word
+var 0618:0872 slip_drag word
+var 0618:087A aileron_cl word        ; [code] aileron*[08F2]
+var 0618:087C cl_aoa word
+var 0618:087E cl_ofs_left word
+var 0618:0880 cl_ofs_right word
+var 0618:0882 flaps_cl word
+var 0618:0886 lift_left word
+var 0618:0888 lift_right word
+var 0618:0892 roll_moment word
+var 0618:089A sin_pitch word
+var 0618:089C sin_bank word
+var 0618:08A0 weight_along word      ; [code] weight*sin(pitch), part of drag
+var 0618:08A2 slip_roll word
+var 0618:08A6 normal_force word
+var 0618:08AA inv_airspeed word      ; [code] div_q15(0280:0000, airspeed)
+var 0618:08AC pitch_accel word
+var 0618:08B0 accel_to_pitch word
+var 0618:0558 stalled byte           ; [code] write only
+var 0618:1E83 wing_damage byte       ; [code] 1 = left wing gone (war)
