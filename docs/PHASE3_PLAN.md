@@ -39,6 +39,7 @@ Symbols from the notes are merged with `python tools/merge_symbols.py`.
 | 3.9 | merged | #8 | [3.9](subphases/3.9.md) |
 | 3.14 | merged | #11 | [3.14](subphases/3.14.md) |
 | 3.12 | merged | (rebuilt from #13) | [3.12](subphases/3.12.md) |
+| 3.16 | merged | #17 | [3.16](subphases/3.16.md) |
 | 3.15 | merged | #16 | [3.15](subphases/3.15.md) |
 | 3.5 | merged | #15 | [3.5](subphases/3.5.md) |
 | 3.17 | merged | #14 | [3.17](subphases/3.17.md) |
