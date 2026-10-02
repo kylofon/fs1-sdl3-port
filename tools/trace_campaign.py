@@ -103,9 +103,9 @@ def session_user_mode(mode):
 def session_editor_values():
     """Edit position/altitude fields on page 1 and flip to other pages."""
     k = ["120:A", "180:B"]
-    ks, f = editor_set(300, 10, 3000)  # altitude
+    ks, f = editor_set(300, 12, 3000)  # altitude (fields: 10 North, 11 East, 12 Altitude, 16 Airspeed)
     k += ks
-    ks, f = editor_set(f, 14, 120)  # airspeed
+    ks, f = editor_set(f, 16, 120)  # airspeed
     k += ks
     ks, f = editor_set(f, 4, 1)  # reality mode
     k += ks
