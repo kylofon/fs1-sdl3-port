@@ -131,8 +131,8 @@ code 0050:4BCD clip_line_planes
 code 0050:2AEA draw_sky_ground       ; [code] skipped in radar view
 code 0050:2B0D horizon_fill          ; [code] projects the horizon (programs per heading octant) and fills bands
 code 0050:2C68 fill_rows             ; [code] rows BL..DL with word pattern BP
-code 0050:2C9E fill_sloped_horizon
-code 0050:2AB0 radar_clear
+code 0050:2C9E fill_sloped_horizon   ; [code] rows BL..CL, boundary BH->AH bytes (8.8 DDA step [1D4D]); left BP, right [1D44]
+code 0050:2AB0 radar_clear           ; [code] clear both banks (0848h words) + radar centre marks; reached by JNE from draw_sky_ground
 code 0050:5A9E draw_view_frame       ; [code] border of the 3D window
 code 0050:0658 view_overlay_marks    ; [code] fixed bytes in the back buffer (gear/throttle/war)?
 code 0050:03BE scenery_reset_ip      ; [code] scenery_ip = scenery_base
@@ -644,3 +644,9 @@ var 0618:1E7A in_range_msg byte
 var 0618:1E7C gun_burst byte
 var 0618:1E81 bullet_timer byte
 var 0618:1E82 status_msg byte
+
+
+# ---- from docs/subphases/3.5.md --------------------
+var 0618:1D40 band_patterns table    ; [code] 4 words: above / sloped-left / sloped-right / below patterns of horizon_fill
+var 0618:1D4C horizon_x_limit byte   ; [code] x/2 threshold choosing the horizon_fill fill path
+var 0618:1D4D horizon_slope word     ; [code] 8.8 boundary step per row (fill_sloped_horizon)
