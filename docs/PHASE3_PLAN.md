@@ -39,7 +39,7 @@ Symbols from the notes are merged with `python tools/merge_symbols.py`.
 | 3.9 | merged | #8 | [3.9](subphases/3.9.md) |
 | 3.14 | merged | #11 | [3.14](subphases/3.14.md) |
 | 3.12 | merged | (rebuilt from #13) | [3.12](subphases/3.12.md) |
-| 3.22 | PR open | – | [3.22](subphases/3.22.md): the default build has no 8086 interpreter |
+| 3.22 | merged | #22 | [3.22](subphases/3.22.md): the default build has no 8086 interpreter |
 | 3.21 | merged | #21 | [3.21](subphases/3.21.md) |
 | 3.20 | merged | #20 | [3.20](subphases/3.20.md) |
 | 3.19 | merged | #19 | [3.19](subphases/3.19.md) |
