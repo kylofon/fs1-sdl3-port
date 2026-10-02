@@ -724,3 +724,39 @@ var 0618:208E editor_field_lists table ; [code] 2 words: field list of page 0 an
 var 0618:2110 editor_page_texts table ; [code] 2 words: 40x25 text of page 0 and page 2
 var 0618:28E4 editor_row_offsets table ; [code] text-screen offset per row byte index (2 per line: 32h, 82h, ...)
 var 0618:3A21 backup_option byte     ; [code] 1 as shipped: a master disk offers the backup; check_master_disk read errors count as a copy
+
+# ---- 3.18 keyboard and controls ----------------------------------------------------------
+code 0050:0955 controls_redraw       ; [code] trim, elevator, flaps, throttle, aileron and rudder indicators
+code 0050:0A19 magnetos_store        ; [code] magnetos = AH, then switch_text
+code 0050:0D01 gear_drag_update      ; [code] gear_drag from gear_down, then switch_text
+code 0050:0E15 key_flaps_10          ; [key] F3
+code 0050:0E1D key_flaps_20          ; [key] F5
+code 0050:0E25 key_flaps_30          ; [key] F7
+code 0050:0E2D key_flaps_40          ; [key] F9
+code 0050:0E6A throttle_indicator    ; [code] draws ind_throttle from throttle
+code 0050:0F25 elevator_update       ; [code] ind_elevator, elev_aoa
+code 0050:0F8A aileron_rudder_update ; [code] aileron_update, then rudder_update
+code 0050:0FA3 aileron_update        ; [code] rudder = aileron under auto-coordination, both indicators
+code 0050:0FB3 aileron_indicator     ; [code] ind_aileron, aileron_cl, control_coupling
+code 0050:0FE2 rudder_update         ; [code] aileron = rudder under auto-coordination, both indicators
+code 0050:0FF2 rudder_indicator      ; [code] ind_rudder, control_coupling
+var 0618:03F9 dg_offset word         ; [code] gyro drift: heading_readout shows view_heading + this - wind offsets; 03F8-03FA += FFh at 0563; 'D' sets it so the gyro matches hdg_display (the compass)
+var 0618:0418 enter_unhooks byte     ; [code] nonzero: Enter restores the BIOS int 8/9 vectors and the PIT (0 in all traces)
+var 0618:0551 key_recent byte        ; [code] 18.2 Hz ticks left: 12h after C/N/T, 8 after KP8/KP2, 0 after -/=, counted down at 07F8; nonzero: C/N/T pick the next field, elevator steps 8x
+var 0618:0595 bda_seg word           ; [code] 0040h, for the Ctrl+Alt+Del warm-boot flag 0040:0072 = 1234h
+var 0618:059B view_dir_fn word       ; [code] view routine from view_dir_fns, chosen by a keypad key after Scroll Lock
+var 0618:05A1 view_dir_fns table     ; [code] 9 view routines by keypad key index / 2 (KP8, KP9, KP6, KP3, KP2, KP1, KP4, KP7, KP5)
+var 0618:08CA gear_drag_down word    ; [code] constant: gear_drag with the gear down (and on the ground)
+var 0618:08CC gear_drag_up word      ; [code] constant: gear_drag with the gear up
+var 0618:08DA elevator_aoa_k word    ; [code] [signed] constant: elev_aoa = elevator * [08DA] >> 15
+var 0618:08DC flaps_drag_k word      ; [code] constant: flaps_drag = flaps * [08DC] >> 16
+var 0618:08DE flaps_view_k word      ; [code] [signed] constant: flaps_view = flaps * [08DE] >> 16
+var 0618:08F2 aileron_cl_k word      ; [code] [signed] constant: aileron_cl = aileron * [08F2] >> 16
+var 0618:08F4 flaps_cl_k word        ; [code] constant: flaps_cl = flaps * [08F4] >> 16
+var 0618:1E20 altimeter_offset word  ; [code] added to the altimeter reading (upd_altimeter); moves by 1 towards takeoff_spot (0551); 'A' clears both
+var 0618:143D ind_aileron table      ; [code] draw_indicator descriptor (3.10); byte +6 = position
+var 0618:1449 ind_rudder table       ; [code] draw_indicator descriptor; byte +6 = position
+var 0618:1455 ind_elevator table     ; [code] draw_indicator descriptor; byte +6 = position
+var 0618:1461 ind_throttle table     ; [code] draw_indicator descriptor; byte +6 = position
+var 0618:146D ind_flaps table        ; [code] draw_indicator descriptor; byte +6 = position
+var 0618:1479 ind_trim table         ; [code] draw_indicator descriptor; byte +6 = position

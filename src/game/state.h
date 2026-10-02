@@ -143,9 +143,14 @@
  *   08C0 mass_constants         table   [code] 0329, 02BC, 2EE0
  *   08C6 view_trim_k            word    [code] constant: view_pitch_trim = hi(AX * [08C6])
  *   08C8 cl0                    word    [code] constant: base lift coefficient of the wing
+ *   08CA gear_drag_down         word    [code] constant: gear_drag with the gear down (and on the ground)
+ *   08CC gear_drag_up           word    [code] constant: gear_drag with the gear up
  *   08CE drag_scale             sword   [code] [signed] constant
  *   08D6 level_rate_pos         sword   [code] +14h
  *   08D8 level_rate_neg         sword   [code] -14h
+ *   08DA elevator_aoa_k         sword   [code] [signed] constant: elev_aoa = elevator * [08DA] >> 15
+ *   08DC flaps_drag_k           word    [code] constant: flaps_drag = flaps * [08DC] >> 16
+ *   08DE flaps_view_k           sword   [code] [signed] constant: flaps_view = flaps * [08DE] >> 16
  *   08E0 thrust_k               word    [code] 0468h
  *   08E2 pitch_to_v_k           sword   [code] [signed] constant: pitch_to_speed = pitch_rate * [08E2] >> 8
  *   08E6 turn_gain              sword   [code] [signed] constant
@@ -153,6 +158,8 @@
  *   08EC friction               sword   [code] [signed] constant: drag added whenever the aircraft moves
  *   08EE empty_weight           word    [code] 09C4h
  *   08F0 lift_slope             sword   [code] [signed] constant: cl_aoa = AoA * [08F0]
+ *   08F2 aileron_cl_k           sword   [code] [signed] constant: aileron_cl = aileron * [08F2] >> 16
+ *   08F4 flaps_cl_k             word    [code] constant: flaps_cl = flaps * [08F4] >> 16
  *   08F6 not_slew               byte    [code] 1 after a normal frame; slew centres the controls once
  *   08F7 ball_value             word    [code] turn coordinator ball
  *   08F9 alt_reset              byte    [code] 0C after editor_apply_state; frames re-applying the editor altitude
@@ -180,6 +187,7 @@
  *   1DDB oil_press              word
  *   1DDD rpm_by_power           table   [code] 32 bytes, by power >> 10
  *   1DFD rpm_windmill           table   [code] 32 bytes, by IAS >> 4
+ *   1E20 altimeter_offset       word    [code] added to the altimeter reading (upd_altimeter); moves by 1 towards takeoff_spot (0551); 'A' clears both
  *   1E22 takeoff_spot           word
  *
  * -- radios --
@@ -242,6 +250,12 @@
  *   12B4 cga_mirror_tbl         table   [code] bit-reversal of 2-bpp pixels (mirrored needles)
  *   13B8 alt_band_sprites       table   [code] 5 blit_sprite records
  *   1400 indicator_force        byte    [code] forced-redraw counter for draw_indicator
+ *   143D ind_aileron            table   [code] draw_indicator descriptor (3.10); byte +6 = position
+ *   1449 ind_rudder             table   [code] draw_indicator descriptor; byte +6 = position
+ *   1455 ind_elevator           table   [code] draw_indicator descriptor; byte +6 = position
+ *   1461 ind_throttle           table   [code] draw_indicator descriptor; byte +6 = position
+ *   146D ind_flaps              table   [code] draw_indicator descriptor; byte +6 = position
+ *   1479 ind_trim               table   [code] draw_indicator descriptor; byte +6 = position
  *   19A3 panel_mask             word    [code] per-instrument update bits
  *   1B22 ai_rows                word    [code] 9876h: attitude rows 76h..98h
  *   1B27 bank_ptr_pos           byte    [code] drawn bank pointer ([1B28] = drawn flag)
@@ -392,6 +406,7 @@
  *   03C5 format_table           table   [code] 8 x {track, head, sector, size} for INT 13h AH=05
  *   03F0 scenery_base           word    [code] scenery program address (3A84)
  *   03F6 frame_counter          word    [code] +1 per frame; low 2 bits = panel phase
+ *   03F9 dg_offset              word    [code] gyro drift: heading_readout shows view_heading + this - wind offsets; 03F8-03FA += FFh at 0563; 'D' sets it so the gyro matches hdg_display (the compass)
  *   03FB old_int9               dword
  *   0405 radar_view             byte    [key]
  *   0406 ground_service         byte    [code] scenery: 1 ramp, 2 war home field
@@ -399,6 +414,7 @@
  *   040E old_int8               dword   [code] restored on exit; never chained
  *   0412 time_of_day            word    [code] 1 day, 2 dusk, 4 night
  *   0416 overlay_fill           word    [code] fill byte for view_overlay_marks, set by scenery?
+ *   0418 enter_unhooks          byte    [code] nonzero: Enter restores the BIOS int 8/9 vectors and the PIT (0 in all traces)
  *   041D blink_bits             word    [code] rotated every frame; scenery tests it for flashing lights
  *   041F horizon_list           table   [code] captured horizon points, FE,x,y records
  *   0449 area_bounds            table   [code] 8 bytes per area: N min/max, E min/max; FFFF ends
@@ -409,11 +425,15 @@
  *   054B pit_accum              word    [code] accumulates the PIT divisor; carries at 36.4 Hz
  *   054D clock_frac             word    [code] +0E11h per 18.2 Hz tick = 1 s per carry
  *   054F clock_sec              byte
+ *   0551 key_recent             byte    [code] 18.2 Hz ticks left: 12h after C/N/T, 8 after KP8/KP2, 0 after -/=, counted down at 07F8; nonzero: C/N/T pick the next field, elevator steps 8x
  *   0553 tick18                 word    [code] 18.2 Hz tick counter
  *   0571 demo_ptr               word    [code] current demo-script byte
  *   0586 radar_zoom             dword   [key] shifted by -/= when selected_item = 2
  *   058A last_scancodes         word    [code] Ctrl+Alt+Del detection
+ *   0595 bda_seg                word    [code] 0040h, for the Ctrl+Alt+Del warm-boot flag 0040:0072 = 1234h
  *   0599 view_not_forward       byte    [code] nonzero: no gun sight, enemy marks or bullets drawn
+ *   059B view_dir_fn            word    [code] view routine from view_dir_fns, chosen by a keypad key after Scroll Lock
+ *   05A1 view_dir_fns           table   [code] 9 view routines by keypad key index / 2 (KP8, KP9, KP6, KP3, KP2, KP1, KP4, KP7, KP5)
  *   05B1 key_handlers           table   [code] word per scancode 01-53h
  *   06A0 hdg_display            word    [code] heading indicator value
  *   07B9 obi_readout_rec        table   [code] print_str record of the OBI readout: +2 course digits, +8 reciprocal
@@ -661,9 +681,14 @@ static inline void gs_set_slew_mode(Pc *pc, uint8_t v) { gs_wr8(pc, GS_SLEW_MODE
 #define GS_MASS_CONSTANTS 0x08C0
 #define GS_VIEW_TRIM_K 0x08C6
 #define GS_CL0 0x08C8
+#define GS_GEAR_DRAG_DOWN 0x08CA
+#define GS_GEAR_DRAG_UP 0x08CC
 #define GS_DRAG_SCALE 0x08CE
 #define GS_LEVEL_RATE_POS 0x08D6
 #define GS_LEVEL_RATE_NEG 0x08D8
+#define GS_ELEVATOR_AOA_K 0x08DA
+#define GS_FLAPS_DRAG_K 0x08DC
+#define GS_FLAPS_VIEW_K 0x08DE
 #define GS_THRUST_K 0x08E0
 #define GS_PITCH_TO_V_K 0x08E2
 #define GS_TURN_GAIN 0x08E6
@@ -671,6 +696,8 @@ static inline void gs_set_slew_mode(Pc *pc, uint8_t v) { gs_wr8(pc, GS_SLEW_MODE
 #define GS_FRICTION 0x08EC
 #define GS_EMPTY_WEIGHT 0x08EE
 #define GS_LIFT_SLOPE 0x08F0
+#define GS_AILERON_CL_K 0x08F2
+#define GS_FLAPS_CL_K 0x08F4
 #define GS_NOT_SLEW 0x08F6
 #define GS_BALL_VALUE 0x08F7
 #define GS_ALT_RESET 0x08F9
@@ -795,12 +822,22 @@ static inline uint16_t gs_view_trim_k(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_
 static inline void gs_set_view_trim_k(Pc *pc, uint16_t v) { gs_wr16(pc, GS_VIEW_TRIM_K, (uint16_t)v); }
 static inline uint16_t gs_cl0(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_CL0); }
 static inline void gs_set_cl0(Pc *pc, uint16_t v) { gs_wr16(pc, GS_CL0, (uint16_t)v); }
+static inline uint16_t gs_gear_drag_down(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_GEAR_DRAG_DOWN); }
+static inline void gs_set_gear_drag_down(Pc *pc, uint16_t v) { gs_wr16(pc, GS_GEAR_DRAG_DOWN, (uint16_t)v); }
+static inline uint16_t gs_gear_drag_up(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_GEAR_DRAG_UP); }
+static inline void gs_set_gear_drag_up(Pc *pc, uint16_t v) { gs_wr16(pc, GS_GEAR_DRAG_UP, (uint16_t)v); }
 static inline int16_t gs_drag_scale(Pc *pc) { return (int16_t)gs_rd16(pc, GS_DRAG_SCALE); }
 static inline void gs_set_drag_scale(Pc *pc, int16_t v) { gs_wr16(pc, GS_DRAG_SCALE, (uint16_t)v); }
 static inline int16_t gs_level_rate_pos(Pc *pc) { return (int16_t)gs_rd16(pc, GS_LEVEL_RATE_POS); }
 static inline void gs_set_level_rate_pos(Pc *pc, int16_t v) { gs_wr16(pc, GS_LEVEL_RATE_POS, (uint16_t)v); }
 static inline int16_t gs_level_rate_neg(Pc *pc) { return (int16_t)gs_rd16(pc, GS_LEVEL_RATE_NEG); }
 static inline void gs_set_level_rate_neg(Pc *pc, int16_t v) { gs_wr16(pc, GS_LEVEL_RATE_NEG, (uint16_t)v); }
+static inline int16_t gs_elevator_aoa_k(Pc *pc) { return (int16_t)gs_rd16(pc, GS_ELEVATOR_AOA_K); }
+static inline void gs_set_elevator_aoa_k(Pc *pc, int16_t v) { gs_wr16(pc, GS_ELEVATOR_AOA_K, (uint16_t)v); }
+static inline uint16_t gs_flaps_drag_k(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_FLAPS_DRAG_K); }
+static inline void gs_set_flaps_drag_k(Pc *pc, uint16_t v) { gs_wr16(pc, GS_FLAPS_DRAG_K, (uint16_t)v); }
+static inline int16_t gs_flaps_view_k(Pc *pc) { return (int16_t)gs_rd16(pc, GS_FLAPS_VIEW_K); }
+static inline void gs_set_flaps_view_k(Pc *pc, int16_t v) { gs_wr16(pc, GS_FLAPS_VIEW_K, (uint16_t)v); }
 static inline uint16_t gs_thrust_k(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_THRUST_K); }
 static inline void gs_set_thrust_k(Pc *pc, uint16_t v) { gs_wr16(pc, GS_THRUST_K, (uint16_t)v); }
 static inline int16_t gs_pitch_to_v_k(Pc *pc) { return (int16_t)gs_rd16(pc, GS_PITCH_TO_V_K); }
@@ -815,6 +852,10 @@ static inline uint16_t gs_empty_weight(Pc *pc) { return (uint16_t)gs_rd16(pc, GS
 static inline void gs_set_empty_weight(Pc *pc, uint16_t v) { gs_wr16(pc, GS_EMPTY_WEIGHT, (uint16_t)v); }
 static inline int16_t gs_lift_slope(Pc *pc) { return (int16_t)gs_rd16(pc, GS_LIFT_SLOPE); }
 static inline void gs_set_lift_slope(Pc *pc, int16_t v) { gs_wr16(pc, GS_LIFT_SLOPE, (uint16_t)v); }
+static inline int16_t gs_aileron_cl_k(Pc *pc) { return (int16_t)gs_rd16(pc, GS_AILERON_CL_K); }
+static inline void gs_set_aileron_cl_k(Pc *pc, int16_t v) { gs_wr16(pc, GS_AILERON_CL_K, (uint16_t)v); }
+static inline uint16_t gs_flaps_cl_k(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_FLAPS_CL_K); }
+static inline void gs_set_flaps_cl_k(Pc *pc, uint16_t v) { gs_wr16(pc, GS_FLAPS_CL_K, (uint16_t)v); }
 static inline uint8_t gs_not_slew(Pc *pc) { return gs_rd8(pc, GS_NOT_SLEW); }
 static inline void gs_set_not_slew(Pc *pc, uint8_t v) { gs_wr8(pc, GS_NOT_SLEW, v); }
 static inline uint16_t gs_ball_value(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_BALL_VALUE); }
@@ -844,6 +885,7 @@ static inline void gs_set_alt_reset(Pc *pc, uint8_t v) { gs_wr8(pc, GS_ALT_RESET
 #define GS_OIL_PRESS 0x1DDB
 #define GS_RPM_BY_POWER 0x1DDD
 #define GS_RPM_WINDMILL 0x1DFD
+#define GS_ALTIMETER_OFFSET 0x1E20
 #define GS_TAKEOFF_SPOT 0x1E22
 
 static inline uint16_t gs_fuel_weight(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_FUEL_WEIGHT); }
@@ -890,6 +932,8 @@ static inline uint8_t gs_rpm_windmill_b(Pc *pc, unsigned i) { return gs_rd8(pc, 
 static inline uint16_t gs_rpm_windmill_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_RPM_WINDMILL + 2 * i)); }
 static inline void gs_set_rpm_windmill_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_RPM_WINDMILL + i), v); }
 static inline void gs_set_rpm_windmill_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_RPM_WINDMILL + 2 * i), v); }
+static inline uint16_t gs_altimeter_offset(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_ALTIMETER_OFFSET); }
+static inline void gs_set_altimeter_offset(Pc *pc, uint16_t v) { gs_wr16(pc, GS_ALTIMETER_OFFSET, (uint16_t)v); }
 static inline uint16_t gs_takeoff_spot(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_TAKEOFF_SPOT); }
 static inline void gs_set_takeoff_spot(Pc *pc, uint16_t v) { gs_wr16(pc, GS_TAKEOFF_SPOT, (uint16_t)v); }
 
@@ -1037,6 +1081,12 @@ static inline void gs_set_atis_fragments_w(Pc *pc, unsigned i, uint16_t v) { gs_
 #define GS_CGA_MIRROR_TBL 0x12B4
 #define GS_ALT_BAND_SPRITES 0x13B8
 #define GS_INDICATOR_FORCE 0x1400
+#define GS_IND_AILERON 0x143D
+#define GS_IND_RUDDER 0x1449
+#define GS_IND_ELEVATOR 0x1455
+#define GS_IND_THROTTLE 0x1461
+#define GS_IND_FLAPS 0x146D
+#define GS_IND_TRIM 0x1479
 #define GS_PANEL_MASK 0x19A3
 #define GS_AI_ROWS 0x1B22
 #define GS_BANK_PTR_POS 0x1B27
@@ -1084,6 +1134,30 @@ static inline void gs_set_alt_band_sprites_b(Pc *pc, unsigned i, uint8_t v) { gs
 static inline void gs_set_alt_band_sprites_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_ALT_BAND_SPRITES + 2 * i), v); }
 static inline uint8_t gs_indicator_force(Pc *pc) { return gs_rd8(pc, GS_INDICATOR_FORCE); }
 static inline void gs_set_indicator_force(Pc *pc, uint8_t v) { gs_wr8(pc, GS_INDICATOR_FORCE, v); }
+static inline uint8_t gs_ind_aileron_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_IND_AILERON + i)); }
+static inline uint16_t gs_ind_aileron_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_IND_AILERON + 2 * i)); }
+static inline void gs_set_ind_aileron_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_IND_AILERON + i), v); }
+static inline void gs_set_ind_aileron_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_IND_AILERON + 2 * i), v); }
+static inline uint8_t gs_ind_rudder_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_IND_RUDDER + i)); }
+static inline uint16_t gs_ind_rudder_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_IND_RUDDER + 2 * i)); }
+static inline void gs_set_ind_rudder_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_IND_RUDDER + i), v); }
+static inline void gs_set_ind_rudder_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_IND_RUDDER + 2 * i), v); }
+static inline uint8_t gs_ind_elevator_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_IND_ELEVATOR + i)); }
+static inline uint16_t gs_ind_elevator_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_IND_ELEVATOR + 2 * i)); }
+static inline void gs_set_ind_elevator_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_IND_ELEVATOR + i), v); }
+static inline void gs_set_ind_elevator_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_IND_ELEVATOR + 2 * i), v); }
+static inline uint8_t gs_ind_throttle_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_IND_THROTTLE + i)); }
+static inline uint16_t gs_ind_throttle_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_IND_THROTTLE + 2 * i)); }
+static inline void gs_set_ind_throttle_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_IND_THROTTLE + i), v); }
+static inline void gs_set_ind_throttle_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_IND_THROTTLE + 2 * i), v); }
+static inline uint8_t gs_ind_flaps_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_IND_FLAPS + i)); }
+static inline uint16_t gs_ind_flaps_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_IND_FLAPS + 2 * i)); }
+static inline void gs_set_ind_flaps_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_IND_FLAPS + i), v); }
+static inline void gs_set_ind_flaps_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_IND_FLAPS + 2 * i), v); }
+static inline uint8_t gs_ind_trim_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_IND_TRIM + i)); }
+static inline uint16_t gs_ind_trim_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_IND_TRIM + 2 * i)); }
+static inline void gs_set_ind_trim_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_IND_TRIM + i), v); }
+static inline void gs_set_ind_trim_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_IND_TRIM + 2 * i), v); }
 static inline uint16_t gs_panel_mask(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_PANEL_MASK); }
 static inline void gs_set_panel_mask(Pc *pc, uint16_t v) { gs_wr16(pc, GS_PANEL_MASK, (uint16_t)v); }
 static inline uint16_t gs_ai_rows(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_AI_ROWS); }
@@ -1534,6 +1608,7 @@ static inline void gs_set_backup_option(Pc *pc, uint8_t v) { gs_wr8(pc, GS_BACKU
 #define GS_FORMAT_TABLE 0x03C5
 #define GS_SCENERY_BASE 0x03F0
 #define GS_FRAME_COUNTER 0x03F6
+#define GS_DG_OFFSET 0x03F9
 #define GS_OLD_INT9 0x03FB
 #define GS_RADAR_VIEW 0x0405
 #define GS_GROUND_SERVICE 0x0406
@@ -1541,6 +1616,7 @@ static inline void gs_set_backup_option(Pc *pc, uint8_t v) { gs_wr8(pc, GS_BACKU
 #define GS_OLD_INT8 0x040E
 #define GS_TIME_OF_DAY 0x0412
 #define GS_OVERLAY_FILL 0x0416
+#define GS_ENTER_UNHOOKS 0x0418
 #define GS_BLINK_BITS 0x041D
 #define GS_HORIZON_LIST 0x041F
 #define GS_AREA_BOUNDS 0x0449
@@ -1551,11 +1627,15 @@ static inline void gs_set_backup_option(Pc *pc, uint8_t v) { gs_wr8(pc, GS_BACKU
 #define GS_PIT_ACCUM 0x054B
 #define GS_CLOCK_FRAC 0x054D
 #define GS_CLOCK_SEC 0x054F
+#define GS_KEY_RECENT 0x0551
 #define GS_TICK18 0x0553
 #define GS_DEMO_PTR 0x0571
 #define GS_RADAR_ZOOM 0x0586
 #define GS_LAST_SCANCODES 0x058A
+#define GS_BDA_SEG 0x0595
 #define GS_VIEW_NOT_FORWARD 0x0599
+#define GS_VIEW_DIR_FN 0x059B
+#define GS_VIEW_DIR_FNS 0x05A1
 #define GS_KEY_HANDLERS 0x05B1
 #define GS_HDG_DISPLAY 0x06A0
 #define GS_OBI_READOUT_REC 0x07B9
@@ -1587,6 +1667,8 @@ static inline uint16_t gs_scenery_base(Pc *pc) { return (uint16_t)gs_rd16(pc, GS
 static inline void gs_set_scenery_base(Pc *pc, uint16_t v) { gs_wr16(pc, GS_SCENERY_BASE, (uint16_t)v); }
 static inline uint16_t gs_frame_counter(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_FRAME_COUNTER); }
 static inline void gs_set_frame_counter(Pc *pc, uint16_t v) { gs_wr16(pc, GS_FRAME_COUNTER, (uint16_t)v); }
+static inline uint16_t gs_dg_offset(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_DG_OFFSET); }
+static inline void gs_set_dg_offset(Pc *pc, uint16_t v) { gs_wr16(pc, GS_DG_OFFSET, (uint16_t)v); }
 static inline uint32_t gs_old_int9(Pc *pc) { return (uint32_t)gs_rd32(pc, GS_OLD_INT9); }
 static inline void gs_set_old_int9(Pc *pc, uint32_t v) { gs_wr32(pc, GS_OLD_INT9, (uint32_t)v); }
 static inline uint8_t gs_radar_view(Pc *pc) { return gs_rd8(pc, GS_RADAR_VIEW); }
@@ -1601,6 +1683,8 @@ static inline uint16_t gs_time_of_day(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_
 static inline void gs_set_time_of_day(Pc *pc, uint16_t v) { gs_wr16(pc, GS_TIME_OF_DAY, (uint16_t)v); }
 static inline uint16_t gs_overlay_fill(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_OVERLAY_FILL); }
 static inline void gs_set_overlay_fill(Pc *pc, uint16_t v) { gs_wr16(pc, GS_OVERLAY_FILL, (uint16_t)v); }
+static inline uint8_t gs_enter_unhooks(Pc *pc) { return gs_rd8(pc, GS_ENTER_UNHOOKS); }
+static inline void gs_set_enter_unhooks(Pc *pc, uint8_t v) { gs_wr8(pc, GS_ENTER_UNHOOKS, v); }
 static inline uint16_t gs_blink_bits(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_BLINK_BITS); }
 static inline void gs_set_blink_bits(Pc *pc, uint16_t v) { gs_wr16(pc, GS_BLINK_BITS, (uint16_t)v); }
 static inline uint8_t gs_horizon_list_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_HORIZON_LIST + i)); }
@@ -1627,6 +1711,8 @@ static inline uint16_t gs_clock_frac(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_C
 static inline void gs_set_clock_frac(Pc *pc, uint16_t v) { gs_wr16(pc, GS_CLOCK_FRAC, (uint16_t)v); }
 static inline uint8_t gs_clock_sec(Pc *pc) { return gs_rd8(pc, GS_CLOCK_SEC); }
 static inline void gs_set_clock_sec(Pc *pc, uint8_t v) { gs_wr8(pc, GS_CLOCK_SEC, v); }
+static inline uint8_t gs_key_recent(Pc *pc) { return gs_rd8(pc, GS_KEY_RECENT); }
+static inline void gs_set_key_recent(Pc *pc, uint8_t v) { gs_wr8(pc, GS_KEY_RECENT, v); }
 static inline uint16_t gs_tick18(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_TICK18); }
 static inline void gs_set_tick18(Pc *pc, uint16_t v) { gs_wr16(pc, GS_TICK18, (uint16_t)v); }
 static inline uint16_t gs_demo_ptr(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_DEMO_PTR); }
@@ -1635,8 +1721,16 @@ static inline uint32_t gs_radar_zoom(Pc *pc) { return (uint32_t)gs_rd32(pc, GS_R
 static inline void gs_set_radar_zoom(Pc *pc, uint32_t v) { gs_wr32(pc, GS_RADAR_ZOOM, (uint32_t)v); }
 static inline uint16_t gs_last_scancodes(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_LAST_SCANCODES); }
 static inline void gs_set_last_scancodes(Pc *pc, uint16_t v) { gs_wr16(pc, GS_LAST_SCANCODES, (uint16_t)v); }
+static inline uint16_t gs_bda_seg(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_BDA_SEG); }
+static inline void gs_set_bda_seg(Pc *pc, uint16_t v) { gs_wr16(pc, GS_BDA_SEG, (uint16_t)v); }
 static inline uint8_t gs_view_not_forward(Pc *pc) { return gs_rd8(pc, GS_VIEW_NOT_FORWARD); }
 static inline void gs_set_view_not_forward(Pc *pc, uint8_t v) { gs_wr8(pc, GS_VIEW_NOT_FORWARD, v); }
+static inline uint16_t gs_view_dir_fn(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_VIEW_DIR_FN); }
+static inline void gs_set_view_dir_fn(Pc *pc, uint16_t v) { gs_wr16(pc, GS_VIEW_DIR_FN, (uint16_t)v); }
+static inline uint8_t gs_view_dir_fns_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_VIEW_DIR_FNS + i)); }
+static inline uint16_t gs_view_dir_fns_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_VIEW_DIR_FNS + 2 * i)); }
+static inline void gs_set_view_dir_fns_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_VIEW_DIR_FNS + i), v); }
+static inline void gs_set_view_dir_fns_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_VIEW_DIR_FNS + 2 * i), v); }
 static inline uint8_t gs_key_handlers_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_KEY_HANDLERS + i)); }
 static inline uint16_t gs_key_handlers_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_KEY_HANDLERS + 2 * i)); }
 static inline void gs_set_key_handlers_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_KEY_HANDLERS + i), v); }
