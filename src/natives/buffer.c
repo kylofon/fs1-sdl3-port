@@ -9,8 +9,8 @@
  * costs. None of the callers test flags after these routines, so flag_mask is 0, but
  * the flags are still left as the original leaves them. */
 #include "native.h"
+#include "game/state.h"
 
-#define VIEW_BUF_SEG 0x3806
 #define ROW_OFFSETS 0x380C
 
 static bool parity8(uint8_t v)
@@ -65,10 +65,9 @@ static void rep_movsw(Cpu8086 *c)
 static void n_clear_view_buffer(Pc *pc)
 {
     Cpu8086 *c = &pc->cpu;
-    uint16_t ds = c->sregs[S_DS];
-    uint16_t words = mem_read16(pc, ds, 0x3800);
-    c->sregs[S_ES] = mem_read16(pc, ds, VIEW_BUF_SEG);
-    c->regs[R_AX] = mem_read16(pc, ds, 0x30C0);
+    uint16_t words = gs_clear_words(pc);
+    c->sregs[S_ES] = gs_view_buf_seg(pc);
+    c->regs[R_AX] = gs_clear_pattern(pc);
     logic_flags(c, 0, true);
     c->regs[R_DI] = 0;
     c->regs[R_CX] = words;
@@ -90,12 +89,12 @@ static void n_blit_view_to_screen(Pc *pc)
     Cpu8086 *c = &pc->cpu;
     uint16_t ds = c->sregs[S_DS];
     cpu_push(c, ds);
-    uint16_t n1 = mem_read16(pc, ds, 0x3802);
+    uint16_t n1 = gs_blit_words0(pc);
     c->regs[R_CX] = n1;
-    c->regs[R_SI] = mem_read16(pc, ds, 0x3808);
-    c->regs[R_DX] = mem_read16(pc, ds, 0x3804);
-    c->regs[R_BP] = mem_read16(pc, ds, 0x380A);
-    c->sregs[S_DS] = mem_read16(pc, ds, VIEW_BUF_SEG);
+    c->regs[R_SI] = gs_blit_off0(pc);
+    c->regs[R_DX] = gs_blit_words1(pc);
+    c->regs[R_BP] = gs_blit_off1(pc);
+    c->sregs[S_DS] = gs_view_buf_seg(pc);
     c->regs[R_AX] = 0xB800;
     c->sregs[S_ES] = 0xB800;
     c->regs[R_DI] = c->regs[R_SI];
@@ -124,9 +123,9 @@ static void plot_pixel(Pc *pc)
     uint32_t a = cpu_linear(es, off);
     uint8_t al = cpu_read8(c, a);
     if (x & 1) {
-        al = (uint8_t)((al & 0xF0) | cpu_read8(c, cpu_linear(ds, 0x30C8)));
+        al = (uint8_t)((al & 0xF0) | cpu_read8(c, cpu_linear(ds, GS_DRAW_COLOUR)));
     } else {
-        al = (uint8_t)((al & 0x0F) | cpu_read8(c, cpu_linear(ds, 0x30C9)));
+        al = (uint8_t)((al & 0x0F) | cpu_read8(c, cpu_linear(ds, (uint16_t)(GS_DRAW_COLOUR + 1))));
         c->cycles += 12;
     }
     cpu_write8(c, a, al);
@@ -147,7 +146,7 @@ static void n_plot_pixel(Pc *pc)
 static void n_plot_pixel_es(Pc *pc)
 {
     Cpu8086 *c = &pc->cpu;
-    c->sregs[S_ES] = mem_read16(pc, c->sregs[S_DS], VIEW_BUF_SEG);
+    c->sregs[S_ES] = gs_view_buf_seg(pc);
     plot_pixel(pc);
 }
 

@@ -20,6 +20,7 @@
  * operand, 4 per bit shifted). Code run through call_orig adds its own cycles as it
  * executes. So the emulated timeline is the same with the natives on. */
 #include "panel.h"
+#include "game/state.h"
 
 static uint32_t cyc; /* original cycles of the routine being run (own code only) */
 
@@ -202,11 +203,11 @@ static void gauge_upd_1431(Pc *pc)
     cyc += 14;
     JCC(!on);
     if (on) {
-        bool ground = rd8(pc, ds, 0x86F) != 0;
+        bool ground = gs_on_ground(pc) != 0;
         cyc += 14;
         JCC(ground);
         if (!ground) {
-            uint8_t a = rd8(pc, ds, 0x84B);
+            uint8_t a = rd8(pc, ds, (uint16_t)(GS_CROSS_CONTROL + 1));
             int r = (int8_t)a * 2;
             uint8_t al = (uint8_t)r;
             bool of = r != (int8_t)al;
@@ -225,25 +226,25 @@ static void gauge_upd_1431(Pc *pc)
             int16_t p = (int16_t)((int8_t)al * 0x30);
             REG(DX) = with_lo(REG(DX), 0x30);
             REG(AX) = (uint16_t)(int16_t)(int8_t)((uint16_t)p >> 8);
-            wr16(pc, ds, 0x8F7, REG(AX));
+            gs_set_ball_value(pc, REG(AX));
             cyc += 4 + 82 + 4 + 2 + 12 + 17;
         } else {
-            bool moving = rd16(pc, ds, 0x8A8) != 0;
+            bool moving = gs_airspeed(pc) != 0;
             cyc += 14;
             JCC(!moving);
             if (moving) {
-                uint8_t a = rd8(pc, ds, 0x58D);
+                uint8_t a = rd8(pc, ds, (uint16_t)(GS_RUDDER + 1));
                 int16_t p = (int16_t)((int8_t)a * (int8_t)0xD0);
                 REG(DX) = with_lo(REG(DX), 0xD0);
                 REG(AX) = (uint16_t)(int16_t)(int8_t)((uint16_t)p >> 8);
-                wr16(pc, ds, 0x8F7, REG(AX));
+                gs_set_ball_value(pc, REG(AX));
                 cyc += 12 + 4 + 82 + 4 + 2 + 12 + 17;
             } else {
-                wr16(pc, ds, 0x8F7, 0);
+                gs_set_ball_value(pc, 0);
                 cyc += 19;
             }
         }
-        uint16_t dx = rd16(pc, ds, 0x8F7);
+        uint16_t dx = gs_ball_value(pc);
         dx = with_lo(dx, (uint8_t)(dx + 0x1F));
         REG(DX) = dx;
         wr8(pc, ds, 0x1437, lo8(dx));
@@ -288,7 +289,7 @@ static void turn_needle(Pc *pc)
         cyc += CYC_RET;
         return;
     }
-    int32_t p = (int16_t)rd16(pc, ds, 0x85A) * 0x190;
+    int32_t p = (int16_t)(uint16_t)gs_turn_rate(pc) * 0x190;
     uint16_t dx = (uint16_t)((uint32_t)p >> 16);
     REG(AX) = (uint16_t)p;
     REG(DX) = dx;
@@ -347,15 +348,15 @@ static bool sub16_jg(uint16_t a, uint16_t b, int borrow, bool *sf)
 static void alt_setting(Pc *pc)
 {
     uint16_t ds = DS;
-    uint16_t ax = rd16(pc, ds, 0x90A);
-    bool fast = (int16_t)rd16(pc, ds, 0x8A8) > 0x0A00;
+    uint16_t ax = gs_field_elevation(pc);
+    bool fast = (int16_t)gs_airspeed(pc) > 0x0A00;
     cyc += 12 + 19;
     JCC(fast);
     if (!fast) {
-        wr16(pc, ds, 0x906, ax);
+        gs_set_ground_elev(pc, ax);
         cyc += 12;
     }
-    uint16_t off = rd16(pc, ds, 0x906);
+    uint16_t off = gs_ground_elev(pc);
     bool jg = sub16_jg(ax, off, 0, NULL);
     ax = (uint16_t)(ax - off);
     cyc += 18;
@@ -372,15 +373,15 @@ static void alt_setting(Pc *pc)
         uint16_t a = rd16(pc, ds, 0x905);
         uint32_t s = (uint32_t)a + ax;
         wr16(pc, ds, 0x905, (uint16_t)s);
-        uint16_t b = rd16(pc, ds, 0x907);
-        wr16(pc, ds, 0x907, (uint16_t)(b + dx + (s >> 16)));
-        uint16_t lo = rd16(pc, ds, 0x30D5);
+        uint16_t b = rd16(pc, ds, (uint16_t)(GS_GROUND_ELEV + 1));
+        wr16(pc, ds, (uint16_t)(GS_GROUND_ELEV + 1), (uint16_t)(b + dx + (s >> 16)));
+        uint16_t lo = rd16(pc, ds, GS_ALTITUDE);
         int borrow = lo < ax;
-        wr16(pc, ds, 0x30D5, (uint16_t)(lo - ax));
-        uint16_t hi = rd16(pc, ds, 0x30D7);
+        wr16(pc, ds, GS_ALTITUDE, (uint16_t)(lo - ax));
+        uint16_t hi = rd16(pc, ds, (uint16_t)(GS_ALTITUDE + 2));
         bool sf;
         bool hjg = sub16_jg(hi, dx, borrow, &sf);
-        wr16(pc, ds, 0x30D7, (uint16_t)(hi - dx - borrow));
+        wr16(pc, ds, (uint16_t)(GS_ALTITUDE + 2), (uint16_t)(hi - dx - borrow));
         REG(DX) = dx;
         cyc += 5 + 18 + 18 + 18 + 18;
         JCC(hjg);
@@ -388,14 +389,14 @@ static void alt_setting(Pc *pc)
             JCC(sf);
             bool clamp = true;
             if (!sf) {
-                bool above = (int16_t)rd16(pc, ds, 0x30D5) > 0x300;
+                bool above = (int16_t)rd16(pc, ds, GS_ALTITUDE) > 0x300;
                 cyc += 19;
                 JCC(above);
                 clamp = !above;
             }
             if (clamp) {
-                wr16(pc, ds, 0x30D5, 0x300);
-                wr16(pc, ds, 0x30D7, 0);
+                wr16(pc, ds, GS_ALTITUDE, 0x300);
+                wr16(pc, ds, (uint16_t)(GS_ALTITUDE + 2), 0);
                 cyc += 19 + 19;
             }
         }
@@ -434,10 +435,10 @@ static void upd_altimeter(Pc *pc)
         cyc += CYC_RET;
         return;
     }
-    uint16_t ax = rd16(pc, ds, 0x30D6);
-    wr16(pc, ds, 0x919, ax);
-    ax = (uint16_t)(ax + rd16(pc, ds, 0x906));
-    wr16(pc, ds, 0x900, ax);
+    uint16_t ax = rd16(pc, ds, (uint16_t)(GS_ALTITUDE + 1));
+    gs_set_alt_m(pc, ax);
+    ax = (uint16_t)(ax + gs_ground_elev(pc));
+    gs_set_alt_display(pc, ax);
     ax = (uint16_t)(ax + rd16(pc, ds, 0x1E20));
     int32_t p = (int16_t)ax * 0x6B8F;
     uint16_t plo = (uint16_t)p, dx = (uint16_t)((uint32_t)p >> 16);
@@ -452,17 +453,17 @@ static void upd_altimeter(Pc *pc)
     if (neg)
         cyc += 6;
     wr8(pc, ds, 0x943 + 9, (uint8_t)(v / 10));
-    wr16(pc, ds, 0x90D, 0x943);
-    wr8(pc, ds, 0x904, 1);
+    gs_set_second_needle_desc(pc, 0x943);
+    gs_set_needle2_force(pc, 1);
     REG(AX) = (uint16_t)(0x0100 | cl);
     REG(BX) = 0x943;
     REG(CX) = 0x939;
     REG(DX) = dx;
-    wr8(pc, ds, 0x914, (uint8_t)(rd8(pc, ds, 0x914) + 1));
+    gs_set_alt_band_on(pc, (uint8_t)(gs_alt_band_on(pc) + 1));
     cyc += 4 + 82 + 4 + 18 + 18 + 19 + 4 + 4 + 4 + 12;
     call_panel(pc, REG(SP), panel_call_draw_needle, 0x2038);
     ds = DS;
-    wr8(pc, ds, 0x914, (uint8_t)(rd8(pc, ds, 0x914) - 1));
+    gs_set_alt_band_on(pc, (uint8_t)(gs_alt_band_on(pc) - 1));
     cyc += 12 + CYC_RET;
 }
 
@@ -472,7 +473,7 @@ static bool altimeter_div_overflow(Pc *pc)
     uint16_t ds = DS;
     if (!(panel_mask(pc) & MASK_ALTIMETER))
         return false;
-    uint16_t ax = (uint16_t)(rd16(pc, ds, 0x30D6) + rd16(pc, ds, 0x906) + rd16(pc, ds, 0x1E20));
+    uint16_t ax = (uint16_t)(rd16(pc, ds, (uint16_t)(GS_ALTITUDE + 1)) + gs_ground_elev(pc) + rd16(pc, ds, 0x1E20));
     int32_t p = (int16_t)ax * 0x6B8F;
     ax = (uint16_t)((uint16_t)((uint32_t)p >> 16) << 1 | (uint16_t)p >> 15);
     uint32_t loops;
@@ -483,14 +484,13 @@ static bool altimeter_div_overflow(Pc *pc)
  * airspeed * 28Fh >> 16 (-> [0902]), clamped to 33h..100h, minus 19h: the needle angle. */
 static void upd_airspeed(Pc *pc)
 {
-    uint16_t ds = DS;
     bool on = panel_mask(pc) & MASK_AIRSPEED;
     cyc += 14;
     JCC(!on);
     if (on) {
-        uint32_t p = (uint32_t)rd16(pc, ds, 0x8A8) * 0x28F;
+        uint32_t p = (uint32_t)gs_airspeed(pc) * 0x28F;
         uint16_t dx = (uint16_t)(p >> 16);
-        wr16(pc, ds, 0x902, dx);
+        gs_set_ias_knots(pc, dx);
         cyc += 12 + 4 + 120 + 18 + 6;
         JCC((int16_t)dx >= 0x33);
         if ((int16_t)dx < 0x33) {
@@ -523,7 +523,7 @@ static void upd_vsi(Pc *pc)
     cyc += 14;
     JCC(!on);
     if (on) {
-        uint16_t ax = rd16(pc, ds, 0x8B2);
+        uint16_t ax = (uint16_t)gs_vertical_speed(pc);
         cyc += 12 + 4;
         for (int bx = 0x12; bx >= 0; bx -= 2) {
             uint16_t a = (uint16_t)(0x91B + bx);
@@ -563,12 +563,11 @@ static void upd_vsi(Pc *pc)
  * engine_rpm * 3B6h >> 8 (low byte) + 8Ah -> draw_needle2 (descriptor 0957). */
 static void upd_tach(Pc *pc)
 {
-    uint16_t ds = DS;
     bool on = panel_mask(pc) & MASK_TACH;
     cyc += 14;
     JCC(!on);
     if (on) {
-        uint32_t p = (uint32_t)rd8(pc, ds, 0x1DC0) * 0x3B6;
+        uint32_t p = (uint32_t)gs_engine_rpm(pc) * 0x3B6;
         uint16_t dx = (uint16_t)(p >> 16);
         uint16_t ax = (uint16_t)(((uint8_t)(p >> 8) + 0x8A) & 0xFF);
         REG(AX) = ax;
@@ -584,8 +583,7 @@ static void upd_tach(Pc *pc)
  * The shown RPM [1DC0] moves one step towards the engine's [1DC1]; then the tachometer. */
 static void rpm_lag(Pc *pc)
 {
-    uint16_t ds = DS;
-    uint8_t al = rd8(pc, ds, 0x1DC0), target = rd8(pc, ds, 0x1DC1);
+    uint8_t al = gs_engine_rpm(pc), target = gs_rpm_target(pc);
     SET_LO(AX, al);
     cyc += 12 + 18;
     JCC(al == target);
@@ -601,7 +599,7 @@ static void rpm_lag(Pc *pc)
     }
     al = (uint8_t)(al - 1);
     SET_LO(AX, al);
-    wr8(pc, ds, 0x1DC0, al);
+    gs_set_engine_rpm(pc, al);
     cyc += 6 + 12 + 17;
     upd_tach(pc);
 }
@@ -616,8 +614,8 @@ static void heading_readout(Pc *pc)
     cyc += 14;
     JCC(!on);
     if (on) {
-        uint16_t ax = (uint16_t)(rd16(pc, ds, 0x3F9) + rd16(pc, ds, 0x30F5) - rd16(pc, ds, 0x917) -
-                                 rd16(pc, ds, 0x915));
+        uint16_t ax = (uint16_t)(rd16(pc, ds, 0x3F9) + (uint16_t)gs_view_heading(pc) - gs_wind_gust_offset(pc) -
+                                 gs_wind_dir_offset(pc));
         ax = (uint16_t)(((uint32_t)ax * 0x168) >> 16);
         uint16_t dx = ax;
         cyc += 12 + 18 + 18 + 18 + 4 + 120 + 4 + 4 + 4 + 4;
@@ -666,22 +664,22 @@ static void slew_readout(Pc *pc)
 {
     uint16_t ds = DS;
     uint16_t sp = REG(SP);
-    bool slew = rd8(pc, ds, 0x204B) != 0;
+    bool slew = gs_slew_mode(pc) != 0;
     cyc += 14;
     JCC(slew);
     if (!slew) {
         cyc += 17 + CYC_RET;
         return;
     }
-    wr16(pc, ds, 0x3800, 0xA0);
+    gs_set_clear_words(pc, 0xA0);
     cyc += 19;
     call_orig(pc, sp, CLEAR_VIEW_BUFFER, 0x1163);
-    REG(AX) = rd16(pc, DS, 0x2050);
+    REG(AX) = gs_editor_north(pc);
     REG(SI) = 0x6DA;
     REG(BX) = 0x6E1;
     cyc += 12 + 4 + 4;
     call_orig(pc, sp, FMT_SIGNED_DEC, 0x116F);
-    REG(AX) = rd16(pc, DS, 0x2052);
+    REG(AX) = gs_editor_east(pc);
     REG(SI) = 0x6E8;
     REG(BX) = 0x6EE;
     cyc += 12 + 4 + 4;
@@ -691,9 +689,9 @@ static void slew_readout(Pc *pc)
     cyc += 19;
     JCC(!pos);
     if (pos) {
-        uint16_t n = rd8(pc, ds, 0x30DA);
+        uint16_t n = rd8(pc, ds, (uint16_t)(GS_POS_NORTH + 1));
         wr16(pc, ds, 0x6AD, n);
-        uint16_t e = rd8(pc, ds, 0x30D2);
+        uint16_t e = rd8(pc, ds, (uint16_t)(GS_POS_EAST + 1));
         wr16(pc, ds, 0x6AF, e);
         REG(AX) = rd16(pc, ds, 0x6AD);
         REG(SI) = 0x6F5;
@@ -722,8 +720,8 @@ static uint16_t two_digits(uint8_t al) { return (uint16_t)((0x30 + al / 10) | (0
 static void light_level(Pc *pc)
 {
     uint16_t ds = DS;
-    uint16_t bx = (uint16_t)(((rd8(pc, ds, 0x206A) & 3) << 3) + 0x1E2C);
-    uint16_t ax = (uint16_t)(rd8(pc, ds, 0x2069) | rd8(pc, ds, 0x2068) << 8);
+    uint16_t bx = (uint16_t)(((gs_season(pc) & 3) << 3) + 0x1E2C);
+    uint16_t ax = (uint16_t)(gs_clock_min(pc) | gs_clock_hour(pc) << 8);
     REG(AX) = ax;
     REG(BX) = bx;
     REG(CX) = 0x1E2C;
@@ -739,7 +737,7 @@ static void light_level(Pc *pc)
             break;
         }
     }
-    wr16(pc, ds, 0x412, level);
+    gs_set_time_of_day(pc, level);
     cyc += 19 + CYC_RET;
 }
 
@@ -747,13 +745,13 @@ static void clock_hm(Pc *pc, uint16_t sp)
 {
     if (!text_gate(pc, sp, 0x1543))
         return;
-    uint16_t ax = two_digits(rd8(pc, DS, 0x2069));
+    uint16_t ax = two_digits(gs_clock_min(pc));
     REG(AX) = ax;
     wr16(pc, DS, 0x7D6, ax);
     REG(SI) = 0x7D4;
     cyc += 12 + 85 + 6 + 6 + 12 + 4;
     call_orig(pc, sp, PRINT_STR_DIM, 0x1556);
-    ax = two_digits(rd8(pc, DS, 0x2068));
+    ax = two_digits(gs_clock_hour(pc));
     REG(AX) = ax;
     wr16(pc, DS, 0x7D1, ax);
     REG(SI) = 0x7CF;
@@ -778,13 +776,13 @@ static void clock_text(Pc *pc)
         cyc += CYC_RET;
         return;
     }
-    uint16_t ax = two_digits(rd8(pc, DS, 0x54F));
+    uint16_t ax = two_digits(gs_clock_sec(pc));
     REG(AX) = ax;
     wr16(pc, DS, 0x7DB, ax);
     REG(SI) = 0x7D9;
     cyc += 12 + 85 + 6 + 6 + 12 + 4;
     call_orig(pc, sp, PRINT_STR_DIM, 0x1539);
-    bool sec = rd8(pc, DS, 0x54F) != 0;
+    bool sec = gs_clock_sec(pc) != 0;
     cyc += 14;
     JCC(sec);
     if (sec) {
@@ -814,14 +812,14 @@ static bool switch_text(Pc *pc)
     uint16_t sp = REG(SP);
     if (!text_gate(pc, sp, 0x1585))
         return false;
-    bool gear = rd8(pc, DS, 0x57E) != 0;
+    bool gear = gs_gear_down(pc) != 0;
     REG(SI) = gear ? 0x7E3 : 0x7DE;
     cyc += 4 + 19;
     JCC(!gear);
     if (gear)
         cyc += 4;
     call_orig(pc, sp, PRINT_STR, 0x1595);
-    bool lights = rd8(pc, DS, 0x582) != 0;
+    bool lights = gs_lights(pc) != 0;
     REG(SI) = lights ? 0x7E8 : 0x7ED;
     cyc += 4 + 19;
     JCC(lights);
@@ -829,7 +827,7 @@ static bool switch_text(Pc *pc)
         cyc += 4;
     call_orig(pc, sp, PRINT_STR, 0x15A5);
     static const uint16_t mag[6] = { 0x7F2, 0x7F7, 0x7FC, 0x801, 0x806, 0x80B };
-    uint8_t al = rd8(pc, DS, 0x583);
+    uint8_t al = gs_magnetos(pc);
     uint16_t si = mag[0];
     cyc += 12 + 4;
     int i = 0;
@@ -847,7 +845,7 @@ static bool switch_text(Pc *pc)
     SET_LO(AX, al);
     REG(SI) = si;
     call_orig(pc, sp, PRINT_STR, 0x15D1);
-    bool carb = rd8(pc, DS, 0x577) != 0;
+    bool carb = gs_carb_heat(pc) != 0;
     REG(SI) = carb ? 0x810 : 0x815;
     cyc += 4 + 19;
     JCC(!carb);
@@ -894,7 +892,7 @@ static void mask_apply(Pc *pc, uint16_t sp)
                 vpush(pc, &s2, DS);
                 uint16_t es = SREG(ES), ds = DS;
                 REG(CX) = rd16(pc, ds, (uint16_t)(rec + 4));
-                wr8(pc, ds, 0x1400, 4);
+                gs_set_indicator_force(pc, 4);
                 cyc += 12 + 15 + 16 + 16 + 17 + 19 + 2;
                 call_orig(pc, s2, REG(CX), 0x2257);
                 SREG(DS) = ds;
@@ -927,12 +925,12 @@ static void panel_update_mask(Pc *pc)
     uint16_t ax = (uint16_t)(rd16(pc, ds, 0x208B) & rd16(pc, ds, 0x19A0) & rd16(pc, ds, 0x19A6));
     REG(AX) = ax;
     cyc += 12 + 18 + 18 + 18;
-    bool same = ax == rd16(pc, ds, 0x19A3);
+    bool same = ax == gs_panel_mask(pc);
     JCC(same);
     if (!same) {
-        REG(BX) = rd16(pc, ds, 0x19A3);
+        REG(BX) = gs_panel_mask(pc);
         REG(CX) = 0x19A9;
-        wr16(pc, ds, 0x19A3, ax);
+        gs_set_panel_mask(pc, ax);
         cyc += 17 + 4 + 12 + CYC_CALL;
         uint16_t s = sp;
         vpush(pc, &s, 0x220E);
@@ -999,7 +997,7 @@ static void obi_restore(Pc *pc, uint16_t sp)
 /* 0050:24D6: the TO/FROM text by [1A14] (0 -> 0825, 1 -> 081A, else 081F), JMP print_str. */
 static void obi_flag_text(Pc *pc, uint16_t sp)
 {
-    uint8_t al = rd8(pc, DS, 0x1A14);
+    uint8_t al = gs_nav_flag(pc);
     uint16_t si;
     cyc += 12;
     al--;
@@ -1024,7 +1022,7 @@ static void obi_flag_text(Pc *pc, uint16_t sp)
 static void obi_needle(Pc *pc)
 {
     uint16_t ds = DS;
-    uint16_t es = rd16(pc, ds, 0x3C2);
+    uint16_t es = gs_screen_seg(pc);
     uint8_t bl = lo8(REG(BX));
     uint16_t rec = (uint16_t)((uint8_t)(bl * 3) + 0x1A25);
     uint8_t cl = rd8(pc, ds, (uint16_t)(rec + 2));
@@ -1070,7 +1068,7 @@ static void obi_glideslope(Pc *pc)
     uint16_t ds = DS;
     uint16_t bx = (uint16_t)((uint8_t)(lo8(REG(BX)) + 0x7A) << 1);
     bx = (uint16_t)(rd16(pc, ds, (uint16_t)(bx + 0x380C)) + 0x2C);
-    uint16_t es = rd16(pc, ds, 0x3C2);
+    uint16_t es = gs_screen_seg(pc);
     wr16(pc, es, bx, 0x5555);
     wr16(pc, es, (uint16_t)(bx + 2), 0x5555);
     REG(AX) = 0x5555;
@@ -1095,8 +1093,8 @@ static void marker_lights(Pc *pc, uint16_t sp)
         cyc += 15 + 8;
     }
     uint8_t dl = al;
-    uint8_t old = rd8(pc, ds, 0x1A16);
-    wr8(pc, ds, 0x1A16, al);
+    uint8_t old = gs_marker_state(pc);
+    gs_set_marker_state(pc, al);
     al = old;
     cyc += 4 + 26 + 5;
     JCC(al == dl);
@@ -1149,15 +1147,15 @@ static uint8_t obi_step(Pc *pc, uint16_t pos, uint16_t target)
 
 static void obi_display(Pc *pc)
 {
-    uint16_t ds = DS, sp = REG(SP);
-    uint8_t ah = (uint8_t)(rd8(pc, ds, 0x1A11) - rd8(pc, ds, 0x1A10));
-    uint8_t al = rd8(pc, ds, 0x1A14);
+    uint16_t sp = REG(SP);
+    uint8_t ah = (uint8_t)(gs_loc_target(pc) - gs_loc_needle(pc));
+    uint8_t al = gs_nav_flag(pc);
     uint8_t bh = al;
-    uint8_t old = rd8(pc, ds, 0x1A15);
-    wr8(pc, ds, 0x1A15, al);
+    uint8_t old = gs_nav_flag_drawn(pc);
+    gs_set_nav_flag_drawn(pc, al);
     al = old;
     bh = (uint8_t)(bh - al);
-    uint8_t ch = (uint8_t)(rd8(pc, ds, 0x1A13) - rd8(pc, ds, 0x1A12));
+    uint8_t ch = (uint8_t)(gs_gs_target(pc) - gs_gs_needle(pc));
     ah |= bh;
     ah |= ch;
     REG(AX) = (uint16_t)(al | ah << 8);
@@ -1192,7 +1190,7 @@ static void obi_display(Pc *pc)
 
 static void obi_check(Pc *pc)
 {
-    uint8_t ah = (uint8_t)(rd8(pc, DS, 0x1A11) - rd8(pc, DS, 0x1A10));
+    uint8_t ah = (uint8_t)(gs_loc_target(pc) - gs_loc_needle(pc));
     SET_HI(AX, ah);
     cyc += 17 + 18;
     JCC(ah != 0);
@@ -1478,9 +1476,9 @@ static void attitude(Pc *pc)
     AiRegs r = { REG(AX), REG(BX), REG(CX), REG(DX), REG(SI), REG(DI), REG(BP) };
 
     /* 262C: end points of the horizon line */
-    SETL(r.bx, (uint8_t)-rd8(pc, ds, 0x30F4));
+    SETL(r.bx, (uint8_t)-rd8(pc, ds, (uint16_t)(GS_VIEW_BANK + 1)));
     r.si = r.bx;
-    r.ax = (uint16_t)(rd16(pc, ds, 0x30F1) << 1);
+    r.ax = (uint16_t)((uint16_t)gs_view_pitch(pc) << 1);
     SETL(r.ax, H8(r.ax));
     SETL(r.ax, (uint8_t)-(uint8_t)(L8(r.ax) + 0xFA));
     r.ax = (uint16_t)(int16_t)(int8_t)L8(r.ax);
@@ -1519,7 +1517,7 @@ static void attitude(Pc *pc)
 
     /* 26AD: rows outside the line's row range get their column moved */
     r.ax = 0x9876;
-    wr16(pc, ds, 0x1B22, r.ax);
+    gs_set_ai_rows(pc, r.ax);
     r.dx = r.si;
     r.cx = r.di;
     cyc += 4 + 12 + 4 + 4 + 5;
@@ -1562,7 +1560,7 @@ static void attitude(Pc *pc)
 
     /* 270B: the left-colour flags (sky / ground) of every row, by bank quadrant */
     SETH(r.dx, 0);
-    SETL(r.dx, rd8(pc, ds, 0x30F4));
+    SETL(r.dx, rd8(pc, ds, (uint16_t)(GS_VIEW_BANK + 1)));
     cyc += 5 + 17 + 5;
     JCC(!(L8(r.dx) & 0x80));
     if (L8(r.dx) & 0x80) {
@@ -1603,7 +1601,7 @@ static void attitude(Pc *pc)
             SETL(r.ax, L8(r.bx));
             cyc += 4;
         }
-        r.bx = rd16(pc, ds, 0x1B22);
+        r.bx = gs_ai_rows(pc);
         SETH(r.ax, H8(r.bx) - L8(r.ax));
         SETL(r.cx, L8(r.bx));
         cyc += 17 + 4 + 5 + 4;
@@ -1643,7 +1641,7 @@ static void attitude(Pc *pc)
                 cyc += 6;
             }
             SETH(r.cx, L8(r.bx));
-            r.bx = rd16(pc, ds, 0x1B22);
+            r.bx = gs_ai_rows(pc);
             SETH(r.ax, H8(r.bx) - H8(r.cx));
             SETH(r.cx, H8(r.cx) - L8(r.ax));
             SETL(r.ax, L8(r.ax) - L8(r.bx));
@@ -1682,7 +1680,7 @@ static void attitude(Pc *pc)
             }
             cyc += 17;
         } else {
-            r.bx = rd16(pc, ds, 0x1B22);
+            r.bx = gs_ai_rows(pc);
             SETH(r.ax, H8(r.bx) - L8(r.bx));
             cyc += 17 + 4 + 5;
             r.bx = ai_rec(L8(r.bx));
@@ -1701,7 +1699,7 @@ static void attitude(Pc *pc)
             SETL(r.ax, L8(r.bx));
             cyc += 4;
         }
-        r.bx = rd16(pc, ds, 0x1B22);
+        r.bx = gs_ai_rows(pc);
         SETH(r.ax, H8(r.bx) - L8(r.ax));
         SETL(r.ax, L8(r.ax) - L8(r.bx));
         cyc += 17 + 4 + 5 + 5;
@@ -1784,7 +1782,7 @@ static void attitude(Pc *pc)
     /* 28CA: redraw what changed, row by row */
     r.ax = 0xB800;
     SREG(ES) = 0xB800;
-    r.cx = rd16(pc, ds, 0x1B22);
+    r.cx = gs_ai_rows(pc);
     cyc += 4 + 4 + 17 + 4;
     r.bx = ai_rec(L8(r.cx));
     SETH(r.cx, H8(r.cx) - L8(r.cx));
@@ -1875,7 +1873,7 @@ static void attitude(Pc *pc)
     {
         uint16_t s = sp;
         vpush(pc, &s, ds);
-        uint16_t seg = rd16(pc, ds, 0x3C2);
+        uint16_t seg = gs_screen_seg(pc);
         r.ax = 0xA80A;
         static const uint16_t or_ax[4] = { 0x3413, 0x14B3, 0x15A3, 0x35F3 };
         for (int i = 0; i < 4; i++)
@@ -1898,14 +1896,14 @@ static void attitude(Pc *pc)
     }
 
     /* 2A14: the bank pointer, when view_bank moved */
-    SETL(r.ax, (uint8_t)(rd8(pc, ds, 0x30F4) - 0x40) >> 1);
+    SETL(r.ax, (uint8_t)(rd8(pc, ds, (uint16_t)(GS_VIEW_BANK + 1)) - 0x40) >> 1);
     bool drawn = rd8(pc, ds, 0x1B28) != 0;
     cyc += 12 + 6 + 8 + 19;
     JCC(!drawn);
     bool draw = true;
     if (drawn) {
         SETH(r.ax, L8(r.ax));
-        SETL(r.ax, rd8(pc, ds, 0x1B27));
+        SETL(r.ax, gs_bank_ptr_pos(pc));
         cyc += 4 + 12 + 5;
         JCC(L8(r.ax) == H8(r.ax));
         if (L8(r.ax) == H8(r.ax)) {
@@ -1923,7 +1921,7 @@ static void attitude(Pc *pc)
         }
     }
     if (draw) {
-        wr8(pc, ds, 0x1B27, L8(r.ax));
+        gs_set_bank_ptr_pos(pc, L8(r.ax));
         wr8(pc, ds, 0x1B28, 1);
         cyc += 12 + 19 + CYC_CALL;
         uint16_t s = sp;
@@ -1943,7 +1941,7 @@ static void attitude(Pc *pc)
 
 static void attitude_fast(Pc *pc)
 {
-    uint16_t ax = (uint16_t)(rd16(pc, DS, 0x854) + 0x500);
+    uint16_t ax = (uint16_t)((uint16_t)gs_roll_rate(pc) + 0x500);
     REG(AX) = ax;
     cyc += 12 + 6 + 6;
     JCC(ax > 0xA00);

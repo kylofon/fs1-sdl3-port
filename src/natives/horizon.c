@@ -20,11 +20,10 @@
  * horizon_fill's own calls are followed by POP/CMP/RET), so flag_mask is 0 and the flags are
  * not reproduced. */
 #include "native.h"
+#include "game/state.h"
 #include "raster.h"
 
-#define VIEW_BUF_SEG 0x3806
 #define ROW_OFFSETS 0x380C
-#define HORIZON_LIST 0x041F
 #define SCENERY_INTERP 0x3CC0
 
 static uint32_t cyc; /* original cycles of the routine being run */
@@ -47,7 +46,6 @@ static uint16_t rd16(Pc *pc, uint16_t seg, uint16_t off) { return mem_read16(pc,
 static void wr8(Pc *pc, uint16_t seg, uint16_t off, uint8_t v) { cpu_write8(&pc->cpu, cpu_linear(seg, off), v); }
 static void wr16(Pc *pc, uint16_t seg, uint16_t off, uint16_t v) { mem_write16(pc, seg, off, v); }
 static uint16_t dsr16(Pc *pc, uint16_t off) { return rd16(pc, SREG(DS), off); }
-static uint8_t dsr8(Pc *pc, uint16_t off) { return rd8(pc, SREG(DS), off); }
 static void dsw16(Pc *pc, uint16_t off, uint16_t v) { wr16(pc, SREG(DS), off, v); }
 
 /* PUSH / POP through the virtual stack pointer *sp. */
@@ -202,16 +200,16 @@ static void fill_sloped_body(Pc *pc)
     SET_LO(CX, LO(CX) - 1);
     REG(DX) = (uint16_t)(HI(BX) << 8);
     REG(BX) = (uint16_t)((REG(BX) & 0xFF) << 1);
-    dsw16(pc, 0x1D4D, REG(AX));
+    gs_set_horizon_slope(pc, REG(AX));
     REG(SI) = REG(CX);
-    REG(AX) = dsr16(pc, 0x1D44);
+    REG(AX) = gs_band_patterns_w(pc, 2);
     SET_HI(CX, 0);
     /* mov dh,bh; xor dl,dl; mov bh,dl; shl bx,1; mov [1D4D],ax; mov si,cx; mov ax,[1D44];
      * xor ch,ch: 4+5+4+8+12+4+12+5 */
     cyc += 54;
     uint16_t t;
     for (;;) {
-        REG(DX) = (uint16_t)(REG(DX) + dsr16(pc, 0x1D4D));
+        REG(DX) = (uint16_t)(REG(DX) + gs_horizon_slope(pc));
         REG(DI) = dsr16(pc, (uint16_t)(REG(BX) + ROW_OFFSETS));
         SET_LO(CX, HI(DX));
         t = REG(BP), REG(BP) = REG(AX), REG(AX) = t;
@@ -289,7 +287,7 @@ static void bands(Pc *pc, uint16_t sp, uint16_t top, uint16_t bottom, uint16_t r
     SET_LO(CX, LO(DX));
     SET_HI(BX, HI(CX));
     SET_HI(AX, HI(DX));
-    REG(BP) = dsr16(pc, 0x1D42);
+    REG(BP) = gs_band_patterns_w(pc, 1);
     cyc += 15 + 15 + 4 + 4 + 4 + 4 + 17;
     call_fill_sloped(pc, s, r2);
     REG(DX) = vpop(pc, &s);
@@ -309,13 +307,13 @@ static void bands(Pc *pc, uint16_t sp, uint16_t top, uint16_t bottom, uint16_t r
 /* sp = SP at entry (the return address on top). */
 static void horizon_fill_body(Pc *pc, uint16_t sp)
 {
-    SREG(ES) = REG(AX) = dsr16(pc, VIEW_BUF_SEG);
-    uint8_t bl = (uint8_t)(((uint8_t)(dsr8(pc, 0x30FC) + 0x10) >> 4) & 0x0E);
+    SREG(ES) = REG(AX) = gs_view_buf_seg(pc);
+    uint8_t bl = (uint8_t)(((uint8_t)(gs_view_angles_b(pc, 5) + 0x10) >> 4) & 0x0E);
     REG(BX) = bl;
     REG(AX) = dsr16(pc, (uint16_t)(bl + 0x1D4F));
-    dsw16(pc, 0x30C2, REG(AX));
-    dsw16(pc, 0x30C6, HORIZON_LIST);
-    wr8(pc, SREG(DS), 0x30CA, 0xFF);
+    gs_set_scenery_ip(pc, REG(AX));
+    gs_set_capture_ptr(pc, GS_HORIZON_LIST);
+    gs_set_capture_mode(pc, 0xFF);
     REG(BX) = 0;
     /* mov ax,[3806]; mov es,ax; mov bl,[30FC]; add bl,10h; 4x shr bl,1; and bl,0Eh; xor bh,bh;
      * mov ax,[bx+1D4F]; mov [30C2],ax; mov [30C6],041F; mov [30CA],FF; xor bx,bx */
@@ -333,18 +331,18 @@ static void horizon_fill_body(Pc *pc, uint16_t sp)
         cyc += 26;
     }
     cyc += 19; /* cmp byte [041F],FF */
-    bool none = dsr8(pc, HORIZON_LIST) == 0xFF;
+    bool none = gs_horizon_list_b(pc, 0) == 0xFF;
     JCC(!none);
     if (none) {
         /* off screen: rows 0..69h with one pattern, ground when [30F8] >= 0 */
         SET_LO(BX, 0);
         SET_LO(DX, 0x69);
-        REG(BP) = dsr16(pc, 0x1D4A);
+        REG(BP) = gs_ground_pattern(pc);
         cyc += 4 + 4 + 17 + 14;
-        bool neg = dsr8(pc, 0x30F8) & 0x80;
+        bool neg = gs_view_angles_b(pc, 1) & 0x80;
         JCC(!neg);
         if (neg) {
-            REG(BP) = dsr16(pc, 0x1D48);
+            REG(BP) = gs_sky_pattern(pc);
             cyc += 17;
         }
         cyc += 17; /* jmp fill_rows: its RET returns to our caller */
@@ -355,13 +353,13 @@ static void horizon_fill_body(Pc *pc, uint16_t sp)
             cyc -= 21; /* a JMP, not a CALL */
         return;
     }
-    REG(CX) = dsr16(pc, HORIZON_LIST);
-    REG(DX) = dsr16(pc, HORIZON_LIST + 2);
+    REG(CX) = gs_horizon_list_w(pc, 0);
+    REG(DX) = gs_horizon_list_w(pc, 1);
     REG(CX) = (uint16_t)(REG(CX) << 8 | REG(CX) >> 8);
     REG(DX) = (uint16_t)(REG(DX) << 8 | REG(DX) >> 8);
     SET_HI(CX, HI(CX) >> 1);
     SET_HI(DX, HI(DX) >> 1);
-    SET_LO(AX, dsr8(pc, 0x1D4C));
+    SET_LO(AX, gs_horizon_x_limit(pc));
     cyc += 17 + 17 + 6 + 6 + 8 + 8 + 12 + 5; /* ... cmp ch,al */
     uint16_t t;
     bool le = HI(CX) <= LO(AX);
@@ -374,9 +372,9 @@ static void horizon_fill_body(Pc *pc, uint16_t sp)
     }
     if (!le) {
         /* 2B98: both ends right of [1D4C] */
-        SET_LO(AX, dsr8(pc, 0x30FA));
-        REG(SI) = dsr16(pc, 0x1D4A);
-        REG(DI) = dsr16(pc, 0x1D48);
+        SET_LO(AX, gs_view_angles_b(pc, 3));
+        REG(SI) = gs_ground_pattern(pc);
+        REG(DI) = gs_sky_pattern(pc);
         cyc += 12 + 17 + 17 + 5;
         bool neg = LO(AX) & 0x80;
         JCC(!neg);
@@ -384,8 +382,8 @@ static void horizon_fill_body(Pc *pc, uint16_t sp)
             t = REG(SI), REG(SI) = REG(DI), REG(DI) = t;
             cyc += 6;
         }
-        dsw16(pc, 0x1D42, REG(SI));
-        dsw16(pc, 0x1D44, REG(DI));
+        gs_set_band_patterns_w(pc, 1, REG(SI));
+        gs_set_band_patterns_w(pc, 2, REG(DI));
         cyc += 18 + 18 + 5;
         bool below = LO(CX) < LO(DX);
         JCC(below);
@@ -397,9 +395,9 @@ static void horizon_fill_body(Pc *pc, uint16_t sp)
         return;
     }
     /* 2BF8 */
-    SET_LO(AX, dsr8(pc, 0x30FA));
-    REG(DI) = dsr16(pc, 0x1D4A);
-    REG(SI) = dsr16(pc, 0x1D48);
+    SET_LO(AX, gs_view_angles_b(pc, 3));
+    REG(DI) = gs_ground_pattern(pc);
+    REG(SI) = gs_sky_pattern(pc);
     SET_LO(AX, LO(AX) + 0x40);
     cyc += 12 + 17 + 17 + 6;
     bool neg = LO(AX) & 0x80;
@@ -408,17 +406,17 @@ static void horizon_fill_body(Pc *pc, uint16_t sp)
         t = REG(SI), REG(SI) = REG(DI), REG(DI) = t;
         cyc += 6;
     }
-    dsw16(pc, 0x1D40, REG(SI));
-    dsw16(pc, 0x1D42, REG(DI));
-    dsw16(pc, 0x1D44, REG(SI));
-    dsw16(pc, 0x1D46, REG(DI));
+    gs_set_band_patterns_w(pc, 0, REG(SI));
+    gs_set_band_patterns_w(pc, 1, REG(DI));
+    gs_set_band_patterns_w(pc, 2, REG(SI));
+    gs_set_band_patterns_w(pc, 3, REG(DI));
     cyc += 4 * 18 + 5;
     bool below = LO(CX) < LO(DX);
     JCC(below);
     if (!below) {
         t = REG(CX), REG(CX) = REG(DX), REG(DX) = t;
-        dsw16(pc, 0x1D42, REG(SI));
-        dsw16(pc, 0x1D44, REG(DI));
+        gs_set_band_patterns_w(pc, 1, REG(SI));
+        gs_set_band_patterns_w(pc, 2, REG(DI));
         cyc += 6 + 18 + 18;
     }
     bands(pc, sp, 0x1D40, 0x1D46, 0x2C3B, 0x2C53, 0x2C67);
@@ -724,11 +722,11 @@ static uint32_t draw_line_cycles(Pc *pc, uint16_t ds, const RasterRegs *in)
  * lines go through the C rasteriser (raster.h); draw_line's CALL writes 40B9 below sp. */
 static void horizon_list_body(Pc *pc, uint16_t sp)
 {
-    REG(AX) = HORIZON_LIST;
-    dsw16(pc, 0x30C4, REG(AX));
+    REG(AX) = GS_HORIZON_LIST;
+    gs_set_line_list_ptr(pc, REG(AX));
     cyc += 4 + 12;
     for (;;) {
-        uint16_t bx = dsr16(pc, 0x30C4);
+        uint16_t bx = gs_line_list_ptr(pc);
         uint16_t ax = dsr16(pc, bx);
         REG(AX) = ax;
         REG(BX) = bx;
@@ -738,15 +736,15 @@ static void horizon_list_body(Pc *pc, uint16_t sp)
             break;
         uint16_t cx = dsr16(pc, (uint16_t)(bx + 2));
         REG(CX) = cx;
-        dsw16(pc, 0x30C4, (uint16_t)(dsr16(pc, 0x30C4) + 4));
+        gs_set_line_list_ptr(pc, (uint16_t)(gs_line_list_ptr(pc) + 4));
         RasterRegs r = { hi8(cx), lo8(ax), cx, REG(DX), lo8(cx), hi8(cx), hi8(ax) };
         wr16(pc, SREG(SS), (uint16_t)(sp - 2), 0x40B9); /* call draw_line */
         cyc += 17 + 19 + 5 + 4 + 4 + 5 + 4 + 4 + 4 + 4 + 4 + 21;
         uint16_t ds = SREG(DS);
         cyc += draw_line_cycles(pc, ds, &r);
-        Bus bus = { pc, rd16(pc, ds, VIEW_BUF_SEG), rd16(pc, 0, 0x120), SREG(SS), (uint16_t)(sp - 4) };
+        Bus bus = { pc, gs_view_buf_seg(pc), rd16(pc, 0, 0x120), SREG(SS), (uint16_t)(sp - 4) };
         RasterBus rb = { &bus, bus_buf_rd, bus_buf_wr, bus_dat_rd, bus_dat_wr, bus_call };
-        if (rd8(pc, ds, 0x31D0))
+        if (gs_poly_mode(pc))
             raster_poly_edge_regs(&rb, &r);
         else
             raster_line_regs(&rb, &r);
@@ -761,7 +759,7 @@ static void horizon_list_body(Pc *pc, uint16_t sp)
         SREG(DS) = rd16(pc, 0, 0x120);
         cyc += 5 + 4 + 11 + 17; /* xor ax,ax; mov ds,ax; mov ds,[120]; jmp */
     }
-    dsw16(pc, 0x30C2, (uint16_t)(dsr16(pc, 0x30C2) + 1));
+    gs_set_scenery_ip(pc, (uint16_t)(gs_scenery_ip(pc) + 1));
     cyc += 12 + 20;
 }
 
@@ -772,16 +770,16 @@ static void horizon_list_body(Pc *pc, uint16_t sp)
 static void radar_clear_body(Pc *pc, uint16_t sp)
 {
     uint16_t s = sp;
-    dsw16(pc, 0x3802, 0x0848);
-    dsw16(pc, 0x3804, 0x0848);
-    dsw16(pc, 0x3800, 0x0848);
+    gs_set_blit_words0(pc, 0x0848);
+    gs_set_blit_words1(pc, 0x0848);
+    gs_set_clear_words(pc, 0x0848);
     cyc += 3 * 19;
     /* call clear_view_buffer */
     vpush(pc, &s, 0x2AC5);
     s = sp;
-    uint16_t words = dsr16(pc, 0x3800);
-    SREG(ES) = dsr16(pc, VIEW_BUF_SEG);
-    REG(AX) = dsr16(pc, 0x30C0);
+    uint16_t words = gs_clear_words(pc);
+    SREG(ES) = gs_view_buf_seg(pc);
+    REG(AX) = gs_clear_pattern(pc);
     cyc += 21 + 11 + 17 + 5 + 12 + 4 + 17 + 20;
     REG(DI) = 0;
     REG(CX) = words;
@@ -791,7 +789,7 @@ static void radar_clear_body(Pc *pc, uint16_t sp)
     rep_stosw(pc);
     /* push ds; mov ds,[3806]; five words; pop ds */
     vpush(pc, &s, SREG(DS));
-    uint16_t buf = dsr16(pc, VIEW_BUF_SEG);
+    uint16_t buf = gs_view_buf_seg(pc);
     wr16(pc, buf, 0x07F7, 0x4001);
     wr16(pc, buf, 0x27F7, 0x7F7F);
     wr16(pc, buf, 0x0847, 0x4001);
@@ -846,7 +844,7 @@ static void n_draw_sky_ground(Pc *pc)
 {
     uint16_t sp = REG(SP);
     cyc = 14; /* test byte [0405],FF */
-    bool radar = dsr8(pc, 0x0405) != 0;
+    bool radar = gs_radar_view(pc) != 0;
     JCC(radar);
     if (radar) {
         radar_clear_body(pc, sp);
@@ -857,15 +855,15 @@ static void n_draw_sky_ground(Pc *pc)
         horizon_fill_body(pc, s);
         REG(SP) = sp;
         cyc += 14; /* test word [0412],2 */
-        bool line = dsr16(pc, 0x0412) & 2;
+        bool line = gs_time_of_day(pc) & 2;
         JCC(!line);
         if (line) {
             cyc += 19; /* cmp byte [041F],FF */
-            line = dsr8(pc, HORIZON_LIST) != 0xFF;
+            line = gs_horizon_list_b(pc, 0) != 0xFF;
             JCC(!line);
         }
         if (line) {
-            dsw16(pc, 0x30C8, 0x8008);
+            gs_set_draw_colour(pc, 0x8008);
             s = sp;
             vpush(pc, &s, 0x2B0C);
             cyc += 19;

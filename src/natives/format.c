@@ -1,5 +1,6 @@
 /* Natives for subphase 3.2 number formatting (see docs/PHASE3_PLAN.md and docs/subphases/3.2.md). */
 #include "native.h"
+#include "game/state.h"
 
 /* ---- small helpers ----------------------------------------------------------- */
 
@@ -52,7 +53,7 @@ static void n_fmt_signed_dec(Pc *pc)
     for (int i = 0; i < 5; i++)
         disp[i] = mem_read16(pc, GAME_CS, disp_at[i]);
     uint16_t cx = 0x8888;
-    uint16_t es = mem_read16(pc, ds, 0x3806); /* view_buf_seg */
+    uint16_t es = gs_view_buf_seg(pc); /* view_buf_seg */
     uint16_t si = c->regs[R_SI];
     ax = mem_read16(pc, ds, si);
     si = str_step(c, si, 2);
@@ -118,7 +119,6 @@ static void n_fmt_dec4(Pc *pc)
  * 100000..1 are split into three byte tables: low bytes at 2036, middle at 203C,
  * high at 2042 (index 0 = 100000). */
 
-#define ED_VALUE 0x2012
 #define ED_DIGITS 0x202C
 #define ED_POW_LO 0x2036
 #define ED_POW_MID 0x203C
@@ -147,9 +147,9 @@ static void n_editor_digits_to_bin(Pc *pc)
         v = (v + p * n) & 0xFFFFFF;
         ax = (uint16_t)((ax & 0xFF00) | (uint8_t)(p >> 16));
     }
-    ds_write8(pc, ED_VALUE, (uint8_t)v);
-    ds_write8(pc, ED_VALUE + 1, (uint8_t)(v >> 8));
-    ds_write8(pc, ED_VALUE + 2, (uint8_t)(v >> 16));
+    ds_write8(pc, GS_EDITOR_VALUE, (uint8_t)v);
+    ds_write8(pc, (uint16_t)(GS_EDITOR_VALUE + 1), (uint8_t)(v >> 8));
+    ds_write8(pc, (uint16_t)(GS_EDITOR_VALUE + 2), (uint8_t)(v >> 16));
     c->regs[R_AX] = ax;
     c->regs[R_CX] = 0;
     c->regs[R_DI] = 6;
@@ -170,15 +170,15 @@ static void n_editor_bin_to_digits(Pc *pc)
     uint16_t es = c->sregs[S_ES];
     /* CALL sub_36F4 leaves its return address below the stack pointer */
     mem_write16(pc, c->sregs[S_SS], (uint16_t)(c->regs[R_SP] - 2), 0x3893);
-    uint16_t bx = ds_read16(pc, (uint16_t)(0x28E4 + ds_read8(pc, 0x2015))); /* sub_36F4 */
+    uint16_t bx = ds_read16(pc, (uint16_t)(0x28E4 + gs_editor_row(pc))); /* sub_36F4 */
     ds_write16(pc, 0x2020, bx);
     ds_write8(pc, 0x2019, 0);
     ds_write16(pc, 0x2032, 0x0A);
     for (uint16_t si = 0x0A; si != 0x16; si += 2)
         wr8(pc, es, (uint16_t)(bx + si), ' ');
 
-    uint32_t v = ds_read8(pc, ED_VALUE) | (uint32_t)ds_read8(pc, ED_VALUE + 1) << 8 |
-                 (uint32_t)ds_read8(pc, ED_VALUE + 2) << 16;
+    uint32_t v = ds_read8(pc, GS_EDITOR_VALUE) | (uint32_t)ds_read8(pc, (uint16_t)(GS_EDITOR_VALUE + 1)) << 8 |
+                 (uint32_t)ds_read8(pc, (uint16_t)(GS_EDITOR_VALUE + 2)) << 16;
     uint8_t written = 0;
     uint16_t pos = 0x0A, si = 0, dx = c->regs[R_DX], ax = c->regs[R_AX];
     for (int di = 5; di >= 0; di--) {
@@ -207,9 +207,9 @@ static void n_editor_bin_to_digits(Pc *pc)
         pos += 2;
         ds_write8(pc, 0x201A, digit);
     }
-    ds_write8(pc, ED_VALUE, (uint8_t)v);
-    ds_write8(pc, ED_VALUE + 1, (uint8_t)(v >> 8));
-    ds_write8(pc, ED_VALUE + 2, (uint8_t)(v >> 16));
+    ds_write8(pc, GS_EDITOR_VALUE, (uint8_t)v);
+    ds_write8(pc, (uint16_t)(GS_EDITOR_VALUE + 1), (uint8_t)(v >> 8));
+    ds_write8(pc, (uint16_t)(GS_EDITOR_VALUE + 2), (uint8_t)(v >> 16));
     ds_write8(pc, 0x2019, written);
     ds_write16(pc, 0x2032, pos);
     c->regs[R_AX] = ax;
