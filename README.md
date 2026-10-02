@@ -27,9 +27,13 @@ verified by scripted key presses against the running game, except where marked *
 | . (Del) | Brakes (on the ground) |
 | H / L | Carburettor heat / lights toggle |
 | 1 2 3 4 5 | Magnetos: off, left, right, both, start |
+| 0 | Magnetos to position 5 (engine off, label shows "LN") |
+| D | Set the heading gyro to the compass |
+| A | Clear the altimeter correction |
 | C, N, V, T | Select COM frequency, NAV frequency, OBI course, transponder digit (press again for the next field) |
 | `-` / `=` | Decrease / increase the selected item |
 | Num Lock / Scroll Lock | Radar (top-down) view on / off; `-`/`=` zoom the radar |
+| Scroll Lock, then a keypad key | Choose the view direction (with the radar off) |
 | P | Pause |
 | KP\* | Restart the flight from the initial position |
 | Esc | "MFS Edit Mode" editor (positions, slew, Europe 1917 war mode, …) |
@@ -40,7 +44,6 @@ verified by scripted key presses against the running game, except where marked *
 | Space | War mode: fire guns |
 | X | War mode: drop a bomb |
 | W | War mode: cycle the status line between SCORE / AMMO / BOMBS |
-| A, D, 0 | No visible effect found yet |
 
 In the Esc editor, Enter moves the `-->` cursor to the next field. Type a value and press Enter to set it,
 then press Esc to return to flight. Slew is the 4th field and Europe 1917 (war mode) is the 7th.
