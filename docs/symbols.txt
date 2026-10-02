@@ -161,7 +161,7 @@ code 0050:2043 upd_airspeed          ; [code] airspeed -> needle (descriptor 092
 code 0050:21F0 panel_update_mask     ; [code] computes panel_mask
 code 0050:156D panel_text_gate       ; [code] skips caller unless panel_mask bit 15
 code 0050:1488 com_tune              ; [code] COM ASCII -> BCD for station compare?
-code 0050:13C6 upd_obi               ; [code] OBI/ILS? uses [06A0]/[06A2]
+code 0050:13C6 upd_obi               ; [code] really the heading indicator digits ([06A0] -> mag heading)
 code 0050:1150 slew_readout          ; [code] north/east readout in slew mode
 code 0050:02CB gauge_upd_1401        ; [code] panel_mask bit -> indicator descriptor 1401
 code 0050:02E2 gauge_upd_140D
@@ -304,8 +304,8 @@ var 0618:39D7 cga_mode_ctrl byte     ; [code] 1A colour (A, C), 1E B/W (B)
 
 
 # ---- from docs/subphases/3.2.md --------------------
-code 0050:1508 fmt_course_digits     ; [code] AL (2-degree units) -> DL hundreds, AL tens, AH units (ASCII)
-code 0050:3553 fmt_dec4_byte         ; [code] AH = 0, then fmt_dec4
+code 0050:1508 course_digits         ; [code] AL (2-deg units) -> DL hundreds, AX tens/units ASCII
+code 0050:3553 num_digits_b          ; [code] AL -> CL,CH,AX ASCII digits (falls into 3555)
 code 0050:3555 num_to_3digits        ; [code] AX -> CL hundreds, CH tens.. ASCII (div 1000, div 100, AAM)
 var  0618:2012 editor_value          ; [code] 24-bit LE value being converted
 var  0618:202C editor_digits         ; [code] 6 ASCII digits, most significant first
@@ -399,7 +399,7 @@ code 0050:45A2 op_demo_script        ; [code] opcode 17: [31E8] = data, IP += r
 code 0050:45B1 op_invalid            ; [code] jmp $ (hang); followed by the text "BADOP"
 code 0050:110C demo_step             ; [code] ~6 Hz in demo mode: next demo-script byte -> key_dispatch
 code 0050:147D nav_search_start      ; [code] [31D5] = 0, [31D3] = 1
-code 0050:1447 nav_tune              ; [code] nav_freq -> BCD [03FF], then nav_search_start
+code 0050:1447 nav_tune              ; [code] gate, print NAV digits, [03FF] = BCD, falls into 147D
 code 0050:2FD0 update_time_of_day    ; [code] clock vs season table 1E2C -> time_of_day 1/2/4
 code 0050:4F7D atis_next_char        ; [code] ATIS text stream: 80h+k = fragment k, 00 ends
 code 0050:4FBF atis_start            ; [code] formats runway/temperature/time/wind fields
@@ -574,21 +574,49 @@ code 0050:1582 switch_text           ; [code] gear/lights/magnetos/carb labels
 code 0050:207C upd_vsi               ; [code] vertical_speed history 091B (10 words) -> draw_needle2 094D
 code 0050:20C0 upd_tach              ; [code] [1DC0]*3B6h>>8 + 8Ah -> draw_needle2 0957
 code 0050:2231 mask_apply            ; [code] per changed panel_mask bit: 5AD7 clear or 5AF3 + call [rec+4]
-code 0050:2419 obi_display           ; [code] OBI needle/glide slope animation, TO/FROM, marker lamps
-code 0050:240E obi_check             ; [code] obi_display only if [1A11] != [1A10]
-code 0050:2474 obi_needle            ; [code] needle column for position BL (records DS:1A25, 3 bytes)
-code 0050:24B9 obi_glideslope        ; [code] 5555h at row_offsets[BL+7Ah]+2Ch
+code 0050:2419 obi_update            ; [code] redraw OBI needles, flag, markers
+code 0050:240E obi_check             ; [code] -> obi_update if [1A10] != [1A11]
+code 0050:2474 obi_needle            ; [code] OR localizer needle n (records 1A25, patterns 1B04)
+code 0050:24B9 obi_glide_bar         ; [code] glide slope bar at line n+7Ah
 code 0050:24D6 obi_flag_text         ; [code] TO/FROM text by [1A14]
-code 0050:24F4 obi_restore           ; [code] OBI area from the view buffer
+code 0050:24F4 obi_restore           ; [code] OBI face from segment [3806]
 code 0050:2620 attitude_fast         ; [code] 262C if |roll_rate| > 500h
 code 0050:262C attitude              ; [code] attitude indicator
 code 0050:293F ai_span               ; [code] fill columns DH..DL of row CL with colour pair DS:1CEB+BL
 code 0050:2A3E bank_pointer          ; [code] XOR bank dots (angles DS:1D31, positions DS:1CEF)
 code 0050:5B88 xor_dot               ; [code] XOR pattern DS:3A00 at row BL, column CX
-var 0618:1A10 obi_needle_pos byte    ; [code] drawn OBI needle (target [1A11])
-var 0618:1A12 gs_needle_pos byte     ; [code] drawn glide slope (target [1A13])
-var 0618:1A14 obi_flag byte          ; [code] 0/1/2 TO/FROM/off text; [1A15] drawn
+var 0618:1A10 loc_needle byte        ; [code] drawn localizer needle 0..3C
+var 0618:1A12 gs_needle byte         ; [code] drawn glide slope 0..18
+var 0618:1A14 nav_flag byte          ; [code] 0 off, 1 TO, 2 FROM
 var 0618:1B22 ai_rows word           ; [code] 9876h: attitude rows 76h..98h
 var 0618:1BAB ai_row_records table   ; [code] 8 bytes per row: +1/+2 edges, +3/+4 colour, +5/+6 horizon column
 var 0618:1B27 bank_ptr_pos byte      ; [code] drawn bank pointer ([1B28] = drawn flag)
 var 0618:08F7 ball_value word        ; [code] turn coordinator ball
+
+
+# ---- from docs/subphases/3.12.md --------------------
+code 0050:14C9 obi_readout           ; [code] OBI course and reciprocal digits (print_str2)
+code 0050:2290 nav_compute           ; [code] VOR/localizer deviation, TO/FROM, glide slope
+code 0050:2525 nav_bearing           ; [code] BX=east, CX=north -> DX bearing 0..437h
+code 0050:2598 atan_cot              ; [code] CX/BX then 25A6
+code 0050:259F atan_tan              ; [code] BX/CX then 25A6 (table 1AE2)
+code 0050:4E53 atis_tick             ; [code] ATIS scroller, from int8_timer
+code 0050:4F68 atis_copy_line        ; [code] rotated copy of a 50h-byte line
+var 0618:06A0 hdg_display word       ; [code] heading indicator value
+var 0618:0919 alt_m word             ; [code] altitude word (upd_altimeter), glide slope
+var 0618:1A11 loc_target byte        ; [code] target, 1E centred
+var 0618:1A13 gs_target byte         ; [code]
+var 0618:1A15 nav_flag_drawn byte    ; [code]
+var 0618:1A16 marker_state byte      ; [code] bits: 0 outer 1A19, 1 middle 1A1B, 2 inner 1A17
+var 0618:1A17 marker_inner byte      ; [code] never set in 1.05
+var 0618:1A21 nav_dn word            ; [code] north offset from station, 16 m units
+var 0618:1A23 nav_de word            ; [code] east offset
+var 0618:1AE2 atan_table table       ; [code] 17 words, 0..870h
+var 0618:1A25 obi_needle_recs table  ; [code] 61 x 3 bytes
+var 0618:3490 atis_seg word          ; [code] screen segment of the ATIS band
+var 0618:3492 atis_lines table       ; [code] 5 x 50h ring buffers
+var 0618:3622 atis_ring_a word       ; [code]
+var 0618:3624 atis_ring_b word       ; [code]
+var 0618:3629 atis_idle_count byte   ; [code]
+var 0618:362A atis_in_fragment byte  ; [code]
+var 0618:362B atis_frag_ptr word     ; [code]
