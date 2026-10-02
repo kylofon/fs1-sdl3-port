@@ -48,6 +48,9 @@ typedef struct App {
     Pc *pc;
 
     uint64_t last_ticks;
+    /* Emulated-time target. Kept absolute so that when a long native step overshoots a
+     * frame's budget, the excess is paid back next frame instead of piling up. */
+    uint64_t target_cycles;
     int speed;
 
     long frame;
@@ -510,7 +513,11 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     }
 
     run_key_script(app);
-    pc_run(pc, pc->cpu.cycles + (uint64_t)(seconds * PC_CPU_HZ * app->speed));
+    if (app->target_cycles < pc->cpu.cycles - (uint64_t)(0.25 * PC_CPU_HZ) || app->target_cycles == 0)
+        app->target_cycles = pc->cpu.cycles; /* resync after a stall (or the first frame) */
+    app->target_cycles += (uint64_t)(seconds * PC_CPU_HZ * app->speed);
+    if (pc->cpu.cycles < app->target_cycles)
+        pc_run(pc, app->target_cycles);
 
     int n = pc_speaker_render(pc, app->samples, SDL_arraysize(app->samples), AUDIO_RATE);
     if (app->audio && app->speed == 1 && SDL_GetAudioStreamQueued(app->audio) < AUDIO_RATE / 5 * 4)

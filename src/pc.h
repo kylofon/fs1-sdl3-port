@@ -50,6 +50,7 @@ typedef struct Pc {
 
     /* i8253 */
     PitChannel pit[3];
+    uint32_t irq0_backlog; /* timer ticks still to deliver after a long step */
     uint32_t pit_cycle_frac;
 
     /* 8255 / keyboard */

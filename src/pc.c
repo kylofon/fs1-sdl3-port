@@ -174,13 +174,23 @@ static void pit_advance(Pc *pc, uint32_t cpu_cycles)
         ch->count -= ticks;
         if (ch->count <= 0) {
             int32_t period = pit_period(ch);
-            bool fired = false;
+            int fired = 0;
             while (ch->count <= 0) {
                 ch->count += period;
-                fired = true;
+                fired++;
             }
-            if (n == 0 && fired && (ch->mode != 0 || ch->loaded))
+            if (n == 0 && fired) {
                 pic_raise(pc, 0);
+                /* Ticks beyond the first fell due inside one long step (a native routine or
+                 * a REP string op), where real hardware would have been interrupted. Keep
+                 * them and deliver them one at a time so the game's timer-driven clock,
+                 * physics and sound keep their rates. */
+                if (ch->mode != 0 && fired > 1) {
+                    pc->irq0_backlog += (uint32_t)(fired - 1);
+                    if (pc->irq0_backlog > 256)
+                        pc->irq0_backlog = 256;
+                }
+            }
             if (ch->mode == 0 && n == 0)
                 ch->loaded = false; /* one-shot */
         }
@@ -406,7 +416,8 @@ static void bios_int13(Pc *pc)
                         sec[b] = pc->mem[a]; /* writes stay in memory, never saved */
                 }
             }
-            pc->cpu.cycles += (uint64_t)count * 20000;
+            /* Disk reads are instant: the game never depends on drive timing, and charging
+             * cycles here would only delay start-up and scenery loads. */
         }
         if (status)
             set_al(pc, 0);
@@ -659,6 +670,10 @@ void pc_run(Pc *pc, uint64_t target)
 {
     Cpu8086 *c = &pc->cpu;
     while (c->cycles < target) {
+        if (pc->irq0_backlog && !(pc->pic_irr & 1) && !(pc->pic_isr & 1)) {
+            pc->pic_irr |= 1;
+            pc->irq0_backlog--;
+        }
         if ((c->flags & F_IF) && !c->int_inhibit) {
             int vector = pic_ack(pc);
             if (vector >= 0)
