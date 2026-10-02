@@ -57,7 +57,7 @@ typedef struct App {
     long max_frames;
     const char *screenshot;
     const char *type_text;
-    struct { long frame, hold; uint8_t sc; } keys[64];
+    struct { long frame, hold; uint8_t sc; } keys[4096];
     int key_count;
     long shot_at[32];
     int shot_count;
@@ -266,8 +266,12 @@ static void parse_keys(App *app, const char *list)
     char *copy = SDL_strdup(list), *save = NULL;
     for (char *tok = SDL_strtok_r(copy, ",", &save); tok; tok = SDL_strtok_r(NULL, ",", &save)) {
         char *colon = SDL_strchr(tok, ':');
-        if (!colon || app->key_count >= (int)SDL_arraysize(app->keys))
+        if (!colon)
             continue;
+        if (app->key_count >= (int)SDL_arraysize(app->keys)) {
+            SDL_Log("--keys: more than %d keys, the rest are ignored", (int)SDL_arraysize(app->keys));
+            break;
+        }
         *colon = 0;
         char *name = colon + 1;
         long hold = 1;
