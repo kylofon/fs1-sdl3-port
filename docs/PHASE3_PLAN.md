@@ -39,6 +39,7 @@ Symbols from the notes are merged with `python tools/merge_symbols.py`.
 | 3.9 | merged | #8 | [3.9](subphases/3.9.md) |
 | 3.14 | merged | #11 | [3.14](subphases/3.14.md) |
 | 3.12 | merged | (rebuilt from #13) | [3.12](subphases/3.12.md) |
+| 3.21 | PR open | – | [3.21](subphases/3.21.md) |
 | 3.20 | merged | #20 | [3.20](subphases/3.20.md) |
 | 3.19 | merged | #19 | [3.19](subphases/3.19.md) |
 | 3.18 | merged | #18 | [3.18](subphases/3.18.md) |
@@ -95,11 +96,25 @@ Natives live in `src/natives/<area>.c` (one table per area, see [subphases/READM
 4. To call another routine from a native: push the return address, then `native_call(pc, OFF)` runs that
    routine's native directly (its cycles are charged; under `--verify` it is checked as part of the
    caller). If it returns false, run the original instead (see `panel.h` for emulating a CALL).
-5. Run `python tools/verify_campaign.py NAME` (or no argument for all). It must print `OK`.
+5. **Declining, loops and non-returning code (3.21).** Set `.try_fn` (`bool n_NAME(Pc *)`) instead of
+   `.fn` to be able to decline a call: return false before changing anything, and the CPU executes the
+   original instruction instead. Typical use: work out the original's cycles first, and decline when
+   `pc_irq_horizon(pc)` says an interrupt or the frame end falls inside (`n < pc_irq_horizon(pc)` is
+   safe); nothing needs undoing. A loop native runs as many whole passes as fit and leaves IP at the
+   loop head. For code that does not return (loop bodies, the main loop) set `.stop_lo`/`.stop_hi`
+   (and optionally `.stops`, a 0-terminated list such as the loop head): `--verify` then runs the
+   original until it leaves that range or reaches a stop, and the native must end at the same CS:IP
+   (do exactly one pass while `native_logged(pc)`). `.exact_cycles = true` makes `--verify` also
+   compare the cycles charged. Call `pc_sync_pit(pc)` before writing a PIT port from a native.
+   See `src/natives/mainloop.c`.
+6. Run `python tools/verify_campaign.py NAME` (or no argument for all). It must print `OK`.
    Compare screenshots with `--native-off NAME` against the default.
 
 The dispatch costs nothing while no native is enabled: `cpu_step` checks `hook_map` (NULL then), and
 otherwise one CS compare and one byte lookup per instruction.
+
+`fs1 --stats` (or `python tools/insn_stats.py`) counts the original instructions still executed, per
+routine.
 
 How `--verify` works: at the entry address the original is single-stepped (no interrupts, cap 5,000,000
 steps) until it returns (SP above its entry value, IP at the return address), with an undo log of all RAM

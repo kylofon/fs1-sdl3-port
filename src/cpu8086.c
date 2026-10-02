@@ -588,6 +588,8 @@ int cpu_step(Cpu8086 *c)
     }
     if (c->hook_map && c->sregs[S_CS] == c->hook_seg && c->hook_map[c->ip] && c->pre_exec(c->hook_ctx, c))
         return (int)(c->cycles - start);
+    if (c->exec_count)
+        c->exec_count[cpu_linear(c->sregs[S_CS], c->ip)]++;
 
     for (;;) {
         op = fetch8(c);

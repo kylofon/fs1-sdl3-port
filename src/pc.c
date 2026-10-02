@@ -666,9 +666,40 @@ void pc_boot(Pc *pc)
     c->halted = false;
 }
 
+void pc_sync_pit(Pc *pc)
+{
+    uint64_t now = pc->cpu.cycles;
+    if (now > pc->pit_synced)
+        pit_advance(pc, (uint32_t)(now - pc->pit_synced));
+    pc->pit_synced = now;
+}
+
+uint64_t pc_irq_horizon(const Pc *pc)
+{
+    uint64_t now = pc->cpu.cycles;
+    if (pc->pic_irr || pc->irq0_backlog)
+        return 0;
+    uint64_t h = pc->run_target > now ? pc->run_target - now : 0;
+    const PitChannel *t = &pc->pit[0];
+    if (t->loaded) {
+        /* it fires when pit_cycle_frac + (now - pit_synced) + n >= 4 * count */
+        int64_t left = 4 * (int64_t)t->count - pc->pit_cycle_frac - (int64_t)(now - pc->pit_synced);
+        uint64_t l = left > 0 ? (uint64_t)left : 0;
+        if (l < h)
+            h = l;
+    }
+    if (!pc->kbd_full && pc->kbd_head != pc->kbd_tail) {
+        uint64_t l = pc->kbd_next_cycle > now ? pc->kbd_next_cycle - now : 0;
+        if (l < h)
+            h = l;
+    }
+    return h;
+}
+
 void pc_run(Pc *pc, uint64_t target)
 {
     Cpu8086 *c = &pc->cpu;
+    pc->run_target = target;
     while (c->cycles < target) {
         if (pc->irq0_backlog && !(pc->pic_irr & 1) && !(pc->pic_isr & 1)) {
             pc->pic_irr |= 1;
@@ -679,8 +710,9 @@ void pc_run(Pc *pc, uint64_t target)
             if (vector >= 0)
                 cpu_interrupt(c, (uint8_t)vector);
         }
-        uint32_t used = (uint32_t)cpu_step(c);
-        pit_advance(pc, used);
+        pc->pit_synced = c->cycles;
+        cpu_step(c);
+        pc_sync_pit(pc);
         kbd_poll(pc);
     }
 }

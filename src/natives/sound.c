@@ -19,13 +19,11 @@
  *
  * Port timing. The clock is advanced instruction by instruction before each IN/OUT, and an
  * OUT is performed 2 cycles into its instruction, where cpu8086.c performs it; so the
- * speaker events get the same cycle stamps as with the original. One thing the bus write
- * cannot reproduce: pc.c advances the PIT only after each CPU step, and a native is one step.
- * A reload (the second byte to port 40h or 42h) restarts the channel's count; the original
- * then counts down only the cycles after the OUT's step started, the native step would count
- * down all of its cycles. pit_reloaded() adds back the PIT ticks of the cycles before the
- * OUT (from the start of the outermost native step), so the count, and with it the timer
- * interrupt and the whole timeline, stays exactly as with the original.
+ * speaker events get the same cycle stamps as with the original. Before a write to a PIT
+ * port the native calls pc_sync_pit() (3.21) at the OUT instruction's start: pc.c advances
+ * the PIT only once per CPU step, and a native is one step, so without it a reloaded count
+ * would also lose the cycles of the native before the OUT. (3.19 added those ticks back to
+ * pc->pit[n].count directly; the pc.c helper replaced that.)
  *
  * Calls out of a native (atis_tick, flight_forces, demo_step, speaker_tone, speaker_off and
  * unknown sound_table targets) run the target the way the CPU would with the natives on: an
@@ -93,18 +91,6 @@ static void taken(Pc *pc, uint16_t addr)
 
 /* ---- ports ------------------------------------------------------------------------------ */
 
-static uint64_t step_start; /* cycle at which the outermost native step began */
-static int depth;
-
-/* Channel n's count was just restarted by a write: add back the ticks the native step will
- * count down for the cycles before the OUT instruction (see the header). */
-static void pit_reloaded(Pc *pc, int n, uint64_t ins_start)
-{
-    PitChannel *ch = &pc->pit[n];
-    uint64_t before = pc->pit_cycle_frac + (ins_start - step_start);
-    ch->count += (int32_t)(before / 4);
-}
-
 /* IN AL, port at 0050:at (the clock is at the instruction's start). */
 static uint8_t in_at(Pc *pc, uint16_t at, uint16_t port)
 {
@@ -116,14 +102,10 @@ static uint8_t in_at(Pc *pc, uint16_t at, uint16_t port)
 /* OUT port, AL at 0050:at (the clock is at the instruction's start). */
 static void out_at(Pc *pc, uint16_t at, uint16_t port, uint8_t v)
 {
-    uint64_t ins_start = pc->cpu.cycles;
+    if (port >= 0x40 && port <= 0x43)
+        pc_sync_pit(pc); /* the step so far counts down the old count (see the header) */
     pc->cpu.cycles += 2;
     pc->cpu.bus.out8(pc->cpu.bus.ctx, port, v);
-    if (port >= 0x40 && port <= 0x42) {
-        const PitChannel *ch = &pc->pit[port - 0x40];
-        if (ch->access != 3 || !ch->write_hi_next)
-            pit_reloaded(pc, port - 0x40, ins_start);
-    }
     pc->cpu.cycles -= 2;
     run(pc, at, (uint16_t)(at + 2));
 }
@@ -585,39 +567,64 @@ static void step_first(Pc *pc)
     c->hook_map = map;
 }
 
-static void entry_run(Pc *pc, void (*body)(Pc *))
+/* irq0: the call is int8_timer's, taken as IRQ0. Until its EOI the PIC holds IRQ0 (ISR bit 0),
+ * and the handler runs with IF clear until the IRET unless if_at_eoi is set; so one timer
+ * tick that falls due inside it is raised and delivered after the IRET with the native exactly
+ * as with the original, and so is a backlog tick. The call is still handed back when two ticks
+ * fall due inside it, or one does while ticks are in the backlog (the original moves a backlog
+ * tick into the IRR right after its EOI, and a tick due after that merges into it), and when
+ * the keyboard latches (3.21; before, any due timer tick or a nonzero backlog handed the call
+ * back, which with the IRQ0 backlog was most calls). */
+static bool timer_due_held(const PitChannel *t0, uint32_t backlog, uint32_t frac, uint64_t n)
+{
+    if (!t0->loaded)
+        return false;
+    int64_t left = t0->count - (int64_t)((frac + n) / 4);
+    if (left > 0)
+        return false;
+    int64_t fires = 1 + (-left) / (t0->reload ? t0->reload : 0x10000);
+    return fires >= 2 || backlog;
+}
+
+static void entry_run(Pc *pc, void (*body)(Pc *), bool irq0)
 {
     Cpu8086 *c = &pc->cpu;
     uint64_t start = c->cycles;
-    if (depth++ == 0)
-        step_start = start;
+    bool timer_held = irq0 && (pc->pic_isr & 1) && !(c->flags & F_IF);
     if (under_verify(pc)) {
         body(pc);
     } else if (log_ready(&irq_log)) {
         Cpu8086 pre = *c;
         PitChannel t0 = pc->pit[0];
         uint32_t backlog = pc->irq0_backlog, frac = pc->pit_cycle_frac;
+        bool held_due = false;
         dev_save(pc, &dev_pre);
         c->write_log = &irq_log;
         if_at_eoi = false;
         body(pc);
         c->write_log = NULL;
-        if (!irq_log.overflow && (if_at_eoi || irq_due(pc, &t0, backlog, frac, start, c->cycles - start))) {
+        if (timer_held) {
+            held_due = timer_due_held(&t0, backlog, frac, c->cycles - start);
+            t0.loaded = false; /* irq_due: the keyboard only */
+            backlog = 0;
+        }
+        if (!irq_log.overflow &&
+            (if_at_eoi || held_due || irq_due(pc, &t0, backlog, frac, start, c->cycles - start))) {
             for (uint32_t i = irq_log.count; i-- > 0;)
                 pc->mem[irq_log.addr[i]] = irq_log.old[i];
             *c = pre;
             dev_load(pc, &dev_pre);
             step_first(pc);
-        }    } else {
+        }
+    } else {
         body(pc);
     }
-    depth--;
     c->cycles -= ENTRY_CYCLES;
 }
 
-static void n_speaker_tone(Pc *pc) { entry_run(pc, b_speaker_tone); }
-static void n_sound_update(Pc *pc) { entry_run(pc, b_sound_update); }
-static void n_int8_timer(Pc *pc) { entry_run(pc, b_int8_timer); }
+static void n_speaker_tone(Pc *pc) { entry_run(pc, b_speaker_tone, false); }
+static void n_sound_update(Pc *pc) { entry_run(pc, b_sound_update, false); }
+static void n_int8_timer(Pc *pc) { entry_run(pc, b_int8_timer, true); }
 
 NativeEntry native_sound[] = {
     { .name = "int8_timer", .seg = GAME_CS, .off = 0x07A0, .fn = n_int8_timer, .enabled = true, .far = true,

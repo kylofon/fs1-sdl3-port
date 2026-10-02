@@ -68,6 +68,10 @@ typedef struct Cpu8086 {
     void *hook_ctx;
 
     CpuWriteLog *write_log; /* optional */
+
+    /* Optional CPU_MEM_SIZE counters: +1 at the linear CS:IP of every original instruction
+     * executed (not for steps handled by pre_exec, nor while halted). For --stats. */
+    uint32_t *exec_count;
 } Cpu8086;
 
 /* Trace flags, one byte per linear address. */

@@ -145,6 +145,14 @@ static bool run_original(Pc *pc, const NativeEntry *e)
     }
     for (long n = 0; n < VERIFY_STEP_CAP; n++) {
         cpu_step(c);
+        if (e->stop_hi) {
+            if (c->sregs[S_CS] != GAME_CS || c->ip < e->stop_lo || c->ip >= e->stop_hi)
+                return true;
+            for (const uint16_t *s = e->stops; s && *s; s++)
+                if (c->ip == *s)
+                    return true;
+            continue;
+        }
         uint16_t d = (uint16_t)(c->regs[R_SP] - sp0);
         if (c->ip == ret_ip && c->sregs[S_CS] == ret_cs && d >= 2 && d < 0x8000)
             return true;
@@ -152,17 +160,28 @@ static bool run_original(Pc *pc, const NativeEntry *e)
     return false;
 }
 
-static void verify_call(Pc *pc, NativeEntry *e)
+/* Runs the entry's C function; false if it declined the call. */
+static bool run_native(Pc *pc, NativeEntry *e)
+{
+    if (e->try_fn)
+        return e->try_fn(pc);
+    e->fn(pc);
+    return true;
+}
+
+static bool verify_call(Pc *pc, NativeEntry *e)
 {
     Cpu8086 *c = &pc->cpu;
-    e->calls++;
     if (!verify_alloc()) {
         SDL_Log("verify: out of memory");
         e->verify = false;
-        e->fn(pc);
+        if (!run_native(pc, e))
+            return false;
+        e->calls++;
         c->cycles += e->cycles ? e->cycles : NATIVE_CALL_CYCLES;
-        return;
+        return true;
     }
+    e->calls++;
 
     /* 1. snapshot */
     Cpu8086 cpu_pre = *c;
@@ -184,7 +203,7 @@ static void verify_call(Pc *pc, NativeEntry *e)
         SDL_Log("verify %s: call %llu: %s; verification of this entry stopped", e->name,
                 (unsigned long long)e->calls,
                 !returned ? "step cap hit before return" : "write log overflow");
-        return; /* keep the original's (partial) progress */
+        return true; /* keep the original's (partial) progress */
     }
 
     /* 3. save the original's result, then undo its writes */
@@ -215,24 +234,32 @@ static void verify_call(Pc *pc, NativeEntry *e)
     log_native.count = 0;
     log_native.overflow = false;
     c->write_log = &log_native;
-    e->fn(pc);
+    bool ran = run_native(pc, e);
     c->write_log = NULL;
 
-    /* 5. compare */
+    /* 5. compare (nothing to compare when the native declined: the original's result stays) */
     char what[160] = "";
+    if (!ran)
+        e->declines++;
     static const char *rn[8] = { "AX", "CX", "DX", "BX", "SP", "BP", "SI", "DI" };
     static const char *sn[4] = { "ES", "CS", "SS", "DS" };
-    for (int r = 0; r < 8 && !what[0]; r++)
+    for (int r = 0; r < 8 && ran && !what[0]; r++)
         if (c->regs[r] != cpu_orig.regs[r])
             SDL_snprintf(what, sizeof what, "%s original %04X native %04X", rn[r], cpu_orig.regs[r], c->regs[r]);
-    for (int r = 0; r < 4 && !what[0]; r++)
+    for (int r = 0; r < 4 && ran && !what[0]; r++)
         if (c->sregs[r] != cpu_orig.sregs[r])
             SDL_snprintf(what, sizeof what, "%s original %04X native %04X", sn[r], cpu_orig.sregs[r], c->sregs[r]);
-    if (!what[0] && c->ip != cpu_orig.ip)
+    if (ran && !what[0] && c->ip != cpu_orig.ip)
         SDL_snprintf(what, sizeof what, "IP original %04X native %04X", cpu_orig.ip, c->ip);
-    if (!what[0] && ((c->flags ^ cpu_orig.flags) & e->flag_mask))
+    if (ran && !what[0] && ((c->flags ^ cpu_orig.flags) & e->flag_mask))
         SDL_snprintf(what, sizeof what, "flags original %04X native %04X (mask %04X)", cpu_orig.flags, c->flags,
                      e->flag_mask);
+    if (ran && !what[0] && e->exact_cycles) {
+        uint64_t charged = c->cycles - cpu_pre.cycles + (e->cycles ? e->cycles : NATIVE_CALL_CYCLES);
+        if (charged != used)
+            SDL_snprintf(what, sizeof what, "cycles original %llu native %llu", (unsigned long long)used,
+                         (unsigned long long)charged);
+    }
     if (log_native.overflow && !what[0])
         SDL_snprintf(what, sizeof what, "native write log overflow");
     for (uint32_t i = 0; i < orig_count && !what[0]; i++) {
@@ -268,6 +295,7 @@ static void verify_call(Pc *pc, NativeEntry *e)
     dev_load(pc, &dev_orig);
     if (speaker_new > 0)
         SDL_memcpy(pc->speaker + speaker_pre, speaker_orig, (size_t)speaker_new * sizeof(SpeakerEvent));
+    return true;
 }
 
 static bool pre_exec(void *ctx, Cpu8086 *c)
@@ -276,13 +304,14 @@ static bool pre_exec(void *ctx, Cpu8086 *c)
     if (verifying)
         return false;
     NativeEntry *e = entries[hook_index[c->ip] - 1];
-    if (e->verify) {
-        verify_call(pc, e);
-    } else {
-        e->calls++;
-        e->fn(pc);
-        c->cycles += e->cycles ? e->cycles : NATIVE_CALL_CYCLES;
+    if (e->verify)
+        return verify_call(pc, e);
+    if (!run_native(pc, e)) {
+        e->declines++;
+        return false; /* the CPU executes the original instruction */
     }
+    e->calls++;
+    c->cycles += e->cycles ? e->cycles : NATIVE_CALL_CYCLES;
     return true;
 }
 
@@ -296,10 +325,16 @@ bool native_call(Pc *pc, uint16_t off)
     if (!e->enabled || e->seg != GAME_CS)
         return false;
     Cpu8086 *c = &pc->cpu;
-    e->calls++;
+    uint16_t ip = c->ip, cs = c->sregs[S_CS];
     c->ip = off;
     c->sregs[S_CS] = GAME_CS;
-    e->fn(pc);
+    if (!run_native(pc, e)) {
+        e->declines++;
+        c->ip = ip;
+        c->sregs[S_CS] = cs;
+        return false;
+    }
+    e->calls++;
     c->cycles += e->cycles ? e->cycles : NATIVE_CALL_CYCLES;
     return true;
 }
@@ -369,10 +404,20 @@ void native_verify_summary(void)
         if (!e->enabled)
             SDL_Log("verify-summary %s calls 0 mismatches 0 (disabled)", e->name);
         else
-            SDL_Log("verify-summary %s calls %llu mismatches %llu original-cycles %llu..%llu", e->name,
+            SDL_Log("verify-summary %s calls %llu mismatches %llu original-cycles %llu..%llu declined %llu", e->name,
                     (unsigned long long)e->calls, (unsigned long long)e->mismatches,
-                    (unsigned long long)e->orig_cycles_min, (unsigned long long)e->orig_cycles_max);
+                    (unsigned long long)e->orig_cycles_min, (unsigned long long)e->orig_cycles_max,
+                    (unsigned long long)e->declines);
     }
+}
+
+uint64_t native_total_calls(void)
+{
+    collect_entries();
+    uint64_t n = 0;
+    for (int i = 0; i < ENTRY_COUNT; i++)
+        n += entries[i]->calls;
+    return n;
 }
 
 void native_shutdown(void)
