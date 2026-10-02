@@ -283,23 +283,43 @@
  *   03F5 editor_active          byte    [code]
  *   057F editor_key             byte    [code] bit 7 = new key
  *   0659 editor_key_table       table   [code] scancode -> editor key
+ *   2010 editor_up              byte    [code] '-' pressed: editor_main moves the cursor up
+ *   2011 editor_exit            byte    [code] Esc pressed: editor_main leaves through editor_apply_state
  *   2012 editor_value           -       [code] 24-bit LE value being converted
  *   2015 editor_row             byte
  *   2017 editor_page            byte
+ *   2018 editor_typed           byte    [code] digits typed in the field (editor_main then calls editor_commit)
+ *   2020 editor_ptr             word    [code] row screen offset (editor_row_ptr), value address (field_next) or preset slot address
+ *   2022 editor_field_scr       word    [code] screen offset of the field's digits (row offset + 0Ah)
+ *   2024 editor_digit           byte    [code] last digit typed
+ *   2026 editor_field_rec       word    [code] current record of the page's field list
+ *   2028 editor_saved_row       byte    [code] editor_row kept across editor_commit / redraws
+ *   202A apply_phase            byte    [code] (frame_counter & 1Fh) - 10h, set by editor_apply_state (read at 4FCE)
+ *   202B editor_ndigits         byte    [code] digits typed so far
  *   202C editor_digits          -       [code] 6 ASCII digits, most significant first
+ *   2032 editor_cell            word    [code] text cell of the next digit (5..0Ah; times 2 = byte offset)
  *   2034 demo_mode              byte    [code]
+ *   2035 demo_request           byte    [code] start-up menu choice A (demo): ORed into demo_mode by editor_apply_state
  *   2036 pow10_lo               -       [code] 100000..1 low bytes; mid at 203C, high at 2042
  *   2048 usermode_cur           byte
  *   2049 editor_values          table   [code] 41h bytes: 2049 sound on, 2050 N, 2052 E, 2054 alt, 2056/58/5A pitch/bank/heading, 205C speed, 205E throttle, 2060-2066 controls
  *   204C reality_mode           byte
+ *   204D editor_demo            byte    [code] editor field "Demonstration mode"
+ *   204F comm_rate              byte    [code] editor field "Communication rate", added to [0542] by the timer handler (ATIS)
  *   2050 editor_north           word    [code] editor_values+7: N, the integer word of pos_north
  *   2052 editor_east            word    [code] editor_values+9: E, the integer word of pos_east
  *   2054 editor_alt             word    [code] editor_values+0B: altitude (feet)
  *   2068 clock_hour             byte
  *   2069 clock_min              byte
  *   206A season                 byte
+ *   206B cloud_tops             table   [code] cloud layer 2 tops / bottoms, layer 1 tops / bottoms (4 words, then shear_tops)
  *   2073 shear_tops             table   [code] 3 words, altitude units at run time
  *   2079 wind_layers            table   [code] 4 x (speed lo / turbulence hi, direction): 3, 2, 1, surface
+ *   2089 reliability            byte    [code] editor field "Reliability factor"
+ *   208A editor_usermode        byte    [code] editor field "User mode": 0-9 recall, same again stores to n+10, 110-129 store to n-100
+ *   208E editor_field_lists     table   [code] 2 words: field list of page 0 and page 2; records {width, row, offset from 2049}, 0 ends
+ *   2110 editor_page_texts      table   [code] 2 words: 40x25 text of page 0 and page 2
+ *   28E4 editor_row_offsets     table   [code] text-screen offset per row byte index (2 per line: 32h, 82h, ...)
  *   2916 usermode_slots         table   [code] 41h bytes per preset, saved to track 26h with 's' in the editor
  *
  * -- view and scenery --
@@ -357,14 +377,19 @@
  *   380C row_offsets            table   [code] scanline -> offset (bank interleave)
  *   399C cga_init_table         table   (port-3D0, value) pairs, 0-terminated
  *   39D7 cga_mode_ctrl          byte    [code] 1A colour (A, C), 1E B/W (B)
+ *   3A21 backup_option          byte    [code] 1 as shipped: a master disk offers the backup; check_master_disk read errors count as a copy
  *
  * -- system --
  * Timer, keyboard, sound, disk and frame bookkeeping.
+ *   03B0 stream_pos             word    [code] byte index in the 4 KB track buffer (B800); 0FFF: read a track next, FFFF: write
+ *   03B2 track_verify           byte    [code] bit 0 set by disk_format_write_track: checksum read-back after the write
  *   03B3 disk_track             byte    [code] track for boot_read_track
  *   03B4 area_tracks            table   [code] start track per scenery area: 0F 12 15 18 1A
  *   03BE cur_area               byte    [code] current scenery area index
+ *   03C0 disk_dx                word    [code] DX of the INT 13h calls (drive 0, head 0)
  *   03C2 screen_seg             word    [code] B800h: CGA segment, also the track buffer of boot_read_track
  *   03C4 disk_error             byte
+ *   03C5 format_table           table   [code] 8 x {track, head, sector, size} for INT 13h AH=05
  *   03F0 scenery_base           word    [code] scenery program address (3A84)
  *   03F6 frame_counter          word    [code] +1 per frame; low 2 bits = panel phase
  *   03FB old_int9               dword
@@ -379,6 +404,7 @@
  *   0449 area_bounds            table   [code] 8 bytes per area: N min/max, E min/max; FFFF ends
  *   0481 crash_messages         table   [code] message pointers by crash_code
  *   0543 spk_pattern            word    [code] rotating speaker bit pattern (engine sound)
+ *   0547 spk_restart            byte    [code] 1 from editor_apply_state: the timer handler restarts the engine note once (sound on)
  *   0548 sound_state            byte    [code] index into the sound_update table
  *   054B pit_accum              word    [code] accumulates the PIT divisor; carries at 36.4 Hz
  *   054D clock_frac             word    [code] +0E11h per 18.2 Hz tick = 1 s per carry
@@ -1155,23 +1181,43 @@ static inline void gs_set_war_mode(Pc *pc, uint8_t v) { gs_wr8(pc, GS_WAR_MODE, 
 #define GS_EDITOR_ACTIVE 0x03F5
 #define GS_EDITOR_KEY 0x057F
 #define GS_EDITOR_KEY_TABLE 0x0659
+#define GS_EDITOR_UP 0x2010
+#define GS_EDITOR_EXIT 0x2011
 #define GS_EDITOR_VALUE 0x2012
 #define GS_EDITOR_ROW 0x2015
 #define GS_EDITOR_PAGE 0x2017
+#define GS_EDITOR_TYPED 0x2018
+#define GS_EDITOR_PTR 0x2020
+#define GS_EDITOR_FIELD_SCR 0x2022
+#define GS_EDITOR_DIGIT 0x2024
+#define GS_EDITOR_FIELD_REC 0x2026
+#define GS_EDITOR_SAVED_ROW 0x2028
+#define GS_APPLY_PHASE 0x202A
+#define GS_EDITOR_NDIGITS 0x202B
 #define GS_EDITOR_DIGITS 0x202C
+#define GS_EDITOR_CELL 0x2032
 #define GS_DEMO_MODE 0x2034
+#define GS_DEMO_REQUEST 0x2035
 #define GS_POW10_LO 0x2036
 #define GS_USERMODE_CUR 0x2048
 #define GS_EDITOR_VALUES 0x2049
 #define GS_REALITY_MODE 0x204C
+#define GS_EDITOR_DEMO 0x204D
+#define GS_COMM_RATE 0x204F
 #define GS_EDITOR_NORTH 0x2050
 #define GS_EDITOR_EAST 0x2052
 #define GS_EDITOR_ALT 0x2054
 #define GS_CLOCK_HOUR 0x2068
 #define GS_CLOCK_MIN 0x2069
 #define GS_SEASON 0x206A
+#define GS_CLOUD_TOPS 0x206B
 #define GS_SHEAR_TOPS 0x2073
 #define GS_WIND_LAYERS 0x2079
+#define GS_RELIABILITY 0x2089
+#define GS_EDITOR_USERMODE 0x208A
+#define GS_EDITOR_FIELD_LISTS 0x208E
+#define GS_EDITOR_PAGE_TEXTS 0x2110
+#define GS_EDITOR_ROW_OFFSETS 0x28E4
 #define GS_USERMODE_SLOTS 0x2916
 
 static inline uint8_t gs_editor_active(Pc *pc) { return gs_rd8(pc, GS_EDITOR_ACTIVE); }
@@ -1182,12 +1228,36 @@ static inline uint8_t gs_editor_key_table_b(Pc *pc, unsigned i) { return gs_rd8(
 static inline uint16_t gs_editor_key_table_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_EDITOR_KEY_TABLE + 2 * i)); }
 static inline void gs_set_editor_key_table_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_EDITOR_KEY_TABLE + i), v); }
 static inline void gs_set_editor_key_table_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_EDITOR_KEY_TABLE + 2 * i), v); }
+static inline uint8_t gs_editor_up(Pc *pc) { return gs_rd8(pc, GS_EDITOR_UP); }
+static inline void gs_set_editor_up(Pc *pc, uint8_t v) { gs_wr8(pc, GS_EDITOR_UP, v); }
+static inline uint8_t gs_editor_exit(Pc *pc) { return gs_rd8(pc, GS_EDITOR_EXIT); }
+static inline void gs_set_editor_exit(Pc *pc, uint8_t v) { gs_wr8(pc, GS_EDITOR_EXIT, v); }
 static inline uint8_t gs_editor_row(Pc *pc) { return gs_rd8(pc, GS_EDITOR_ROW); }
 static inline void gs_set_editor_row(Pc *pc, uint8_t v) { gs_wr8(pc, GS_EDITOR_ROW, v); }
 static inline uint8_t gs_editor_page(Pc *pc) { return gs_rd8(pc, GS_EDITOR_PAGE); }
 static inline void gs_set_editor_page(Pc *pc, uint8_t v) { gs_wr8(pc, GS_EDITOR_PAGE, v); }
+static inline uint8_t gs_editor_typed(Pc *pc) { return gs_rd8(pc, GS_EDITOR_TYPED); }
+static inline void gs_set_editor_typed(Pc *pc, uint8_t v) { gs_wr8(pc, GS_EDITOR_TYPED, v); }
+static inline uint16_t gs_editor_ptr(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_EDITOR_PTR); }
+static inline void gs_set_editor_ptr(Pc *pc, uint16_t v) { gs_wr16(pc, GS_EDITOR_PTR, (uint16_t)v); }
+static inline uint16_t gs_editor_field_scr(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_EDITOR_FIELD_SCR); }
+static inline void gs_set_editor_field_scr(Pc *pc, uint16_t v) { gs_wr16(pc, GS_EDITOR_FIELD_SCR, (uint16_t)v); }
+static inline uint8_t gs_editor_digit(Pc *pc) { return gs_rd8(pc, GS_EDITOR_DIGIT); }
+static inline void gs_set_editor_digit(Pc *pc, uint8_t v) { gs_wr8(pc, GS_EDITOR_DIGIT, v); }
+static inline uint16_t gs_editor_field_rec(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_EDITOR_FIELD_REC); }
+static inline void gs_set_editor_field_rec(Pc *pc, uint16_t v) { gs_wr16(pc, GS_EDITOR_FIELD_REC, (uint16_t)v); }
+static inline uint8_t gs_editor_saved_row(Pc *pc) { return gs_rd8(pc, GS_EDITOR_SAVED_ROW); }
+static inline void gs_set_editor_saved_row(Pc *pc, uint8_t v) { gs_wr8(pc, GS_EDITOR_SAVED_ROW, v); }
+static inline uint8_t gs_apply_phase(Pc *pc) { return gs_rd8(pc, GS_APPLY_PHASE); }
+static inline void gs_set_apply_phase(Pc *pc, uint8_t v) { gs_wr8(pc, GS_APPLY_PHASE, v); }
+static inline uint8_t gs_editor_ndigits(Pc *pc) { return gs_rd8(pc, GS_EDITOR_NDIGITS); }
+static inline void gs_set_editor_ndigits(Pc *pc, uint8_t v) { gs_wr8(pc, GS_EDITOR_NDIGITS, v); }
+static inline uint16_t gs_editor_cell(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_EDITOR_CELL); }
+static inline void gs_set_editor_cell(Pc *pc, uint16_t v) { gs_wr16(pc, GS_EDITOR_CELL, (uint16_t)v); }
 static inline uint8_t gs_demo_mode(Pc *pc) { return gs_rd8(pc, GS_DEMO_MODE); }
 static inline void gs_set_demo_mode(Pc *pc, uint8_t v) { gs_wr8(pc, GS_DEMO_MODE, v); }
+static inline uint8_t gs_demo_request(Pc *pc) { return gs_rd8(pc, GS_DEMO_REQUEST); }
+static inline void gs_set_demo_request(Pc *pc, uint8_t v) { gs_wr8(pc, GS_DEMO_REQUEST, v); }
 static inline uint8_t gs_usermode_cur(Pc *pc) { return gs_rd8(pc, GS_USERMODE_CUR); }
 static inline void gs_set_usermode_cur(Pc *pc, uint8_t v) { gs_wr8(pc, GS_USERMODE_CUR, v); }
 static inline uint8_t gs_editor_values_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_EDITOR_VALUES + i)); }
@@ -1196,6 +1266,10 @@ static inline void gs_set_editor_values_b(Pc *pc, unsigned i, uint8_t v) { gs_wr
 static inline void gs_set_editor_values_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_EDITOR_VALUES + 2 * i), v); }
 static inline uint8_t gs_reality_mode(Pc *pc) { return gs_rd8(pc, GS_REALITY_MODE); }
 static inline void gs_set_reality_mode(Pc *pc, uint8_t v) { gs_wr8(pc, GS_REALITY_MODE, v); }
+static inline uint8_t gs_editor_demo(Pc *pc) { return gs_rd8(pc, GS_EDITOR_DEMO); }
+static inline void gs_set_editor_demo(Pc *pc, uint8_t v) { gs_wr8(pc, GS_EDITOR_DEMO, v); }
+static inline uint8_t gs_comm_rate(Pc *pc) { return gs_rd8(pc, GS_COMM_RATE); }
+static inline void gs_set_comm_rate(Pc *pc, uint8_t v) { gs_wr8(pc, GS_COMM_RATE, v); }
 static inline uint16_t gs_editor_north(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_EDITOR_NORTH); }
 static inline void gs_set_editor_north(Pc *pc, uint16_t v) { gs_wr16(pc, GS_EDITOR_NORTH, (uint16_t)v); }
 static inline uint16_t gs_editor_east(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_EDITOR_EAST); }
@@ -1208,6 +1282,10 @@ static inline uint8_t gs_clock_min(Pc *pc) { return gs_rd8(pc, GS_CLOCK_MIN); }
 static inline void gs_set_clock_min(Pc *pc, uint8_t v) { gs_wr8(pc, GS_CLOCK_MIN, v); }
 static inline uint8_t gs_season(Pc *pc) { return gs_rd8(pc, GS_SEASON); }
 static inline void gs_set_season(Pc *pc, uint8_t v) { gs_wr8(pc, GS_SEASON, v); }
+static inline uint8_t gs_cloud_tops_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_CLOUD_TOPS + i)); }
+static inline uint16_t gs_cloud_tops_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_CLOUD_TOPS + 2 * i)); }
+static inline void gs_set_cloud_tops_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_CLOUD_TOPS + i), v); }
+static inline void gs_set_cloud_tops_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_CLOUD_TOPS + 2 * i), v); }
 static inline uint8_t gs_shear_tops_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_SHEAR_TOPS + i)); }
 static inline uint16_t gs_shear_tops_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_SHEAR_TOPS + 2 * i)); }
 static inline void gs_set_shear_tops_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_SHEAR_TOPS + i), v); }
@@ -1216,6 +1294,22 @@ static inline uint8_t gs_wind_layers_b(Pc *pc, unsigned i) { return gs_rd8(pc, (
 static inline uint16_t gs_wind_layers_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_WIND_LAYERS + 2 * i)); }
 static inline void gs_set_wind_layers_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_WIND_LAYERS + i), v); }
 static inline void gs_set_wind_layers_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_WIND_LAYERS + 2 * i), v); }
+static inline uint8_t gs_reliability(Pc *pc) { return gs_rd8(pc, GS_RELIABILITY); }
+static inline void gs_set_reliability(Pc *pc, uint8_t v) { gs_wr8(pc, GS_RELIABILITY, v); }
+static inline uint8_t gs_editor_usermode(Pc *pc) { return gs_rd8(pc, GS_EDITOR_USERMODE); }
+static inline void gs_set_editor_usermode(Pc *pc, uint8_t v) { gs_wr8(pc, GS_EDITOR_USERMODE, v); }
+static inline uint8_t gs_editor_field_lists_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_EDITOR_FIELD_LISTS + i)); }
+static inline uint16_t gs_editor_field_lists_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_EDITOR_FIELD_LISTS + 2 * i)); }
+static inline void gs_set_editor_field_lists_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_EDITOR_FIELD_LISTS + i), v); }
+static inline void gs_set_editor_field_lists_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_EDITOR_FIELD_LISTS + 2 * i), v); }
+static inline uint8_t gs_editor_page_texts_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_EDITOR_PAGE_TEXTS + i)); }
+static inline uint16_t gs_editor_page_texts_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_EDITOR_PAGE_TEXTS + 2 * i)); }
+static inline void gs_set_editor_page_texts_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_EDITOR_PAGE_TEXTS + i), v); }
+static inline void gs_set_editor_page_texts_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_EDITOR_PAGE_TEXTS + 2 * i), v); }
+static inline uint8_t gs_editor_row_offsets_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_EDITOR_ROW_OFFSETS + i)); }
+static inline uint16_t gs_editor_row_offsets_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_EDITOR_ROW_OFFSETS + 2 * i)); }
+static inline void gs_set_editor_row_offsets_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_EDITOR_ROW_OFFSETS + i), v); }
+static inline void gs_set_editor_row_offsets_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_EDITOR_ROW_OFFSETS + 2 * i), v); }
 static inline uint8_t gs_usermode_slots_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_USERMODE_SLOTS + i)); }
 static inline uint16_t gs_usermode_slots_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_USERMODE_SLOTS + 2 * i)); }
 static inline void gs_set_usermode_slots_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_USERMODE_SLOTS + i), v); }
@@ -1276,6 +1370,7 @@ static inline void gs_set_usermode_slots_w(Pc *pc, unsigned i, uint16_t v) { gs_
 #define GS_ROW_OFFSETS 0x380C
 #define GS_CGA_INIT_TABLE 0x399C
 #define GS_CGA_MODE_CTRL 0x39D7
+#define GS_BACKUP_OPTION 0x3A21
 
 static inline uint8_t gs_band_patterns_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_BAND_PATTERNS + i)); }
 static inline uint16_t gs_band_patterns_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_BAND_PATTERNS + 2 * i)); }
@@ -1423,14 +1518,20 @@ static inline void gs_set_cga_init_table_b(Pc *pc, unsigned i, uint8_t v) { gs_w
 static inline void gs_set_cga_init_table_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_CGA_INIT_TABLE + 2 * i), v); }
 static inline uint8_t gs_cga_mode_ctrl(Pc *pc) { return gs_rd8(pc, GS_CGA_MODE_CTRL); }
 static inline void gs_set_cga_mode_ctrl(Pc *pc, uint8_t v) { gs_wr8(pc, GS_CGA_MODE_CTRL, v); }
+static inline uint8_t gs_backup_option(Pc *pc) { return gs_rd8(pc, GS_BACKUP_OPTION); }
+static inline void gs_set_backup_option(Pc *pc, uint8_t v) { gs_wr8(pc, GS_BACKUP_OPTION, v); }
 
 /* ---- system ------------------------------------------------------------------------------ */
 
+#define GS_STREAM_POS 0x03B0
+#define GS_TRACK_VERIFY 0x03B2
 #define GS_DISK_TRACK 0x03B3
 #define GS_AREA_TRACKS 0x03B4
 #define GS_CUR_AREA 0x03BE
+#define GS_DISK_DX 0x03C0
 #define GS_SCREEN_SEG 0x03C2
 #define GS_DISK_ERROR 0x03C4
+#define GS_FORMAT_TABLE 0x03C5
 #define GS_SCENERY_BASE 0x03F0
 #define GS_FRAME_COUNTER 0x03F6
 #define GS_OLD_INT9 0x03FB
@@ -1445,6 +1546,7 @@ static inline void gs_set_cga_mode_ctrl(Pc *pc, uint8_t v) { gs_wr8(pc, GS_CGA_M
 #define GS_AREA_BOUNDS 0x0449
 #define GS_CRASH_MESSAGES 0x0481
 #define GS_SPK_PATTERN 0x0543
+#define GS_SPK_RESTART 0x0547
 #define GS_SOUND_STATE 0x0548
 #define GS_PIT_ACCUM 0x054B
 #define GS_CLOCK_FRAC 0x054D
@@ -1459,6 +1561,10 @@ static inline void gs_set_cga_mode_ctrl(Pc *pc, uint8_t v) { gs_wr8(pc, GS_CGA_M
 #define GS_OBI_READOUT_REC 0x07B9
 #define GS_CLIMB_STEP 0x0830
 
+static inline uint16_t gs_stream_pos(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_STREAM_POS); }
+static inline void gs_set_stream_pos(Pc *pc, uint16_t v) { gs_wr16(pc, GS_STREAM_POS, (uint16_t)v); }
+static inline uint8_t gs_track_verify(Pc *pc) { return gs_rd8(pc, GS_TRACK_VERIFY); }
+static inline void gs_set_track_verify(Pc *pc, uint8_t v) { gs_wr8(pc, GS_TRACK_VERIFY, v); }
 static inline uint8_t gs_disk_track(Pc *pc) { return gs_rd8(pc, GS_DISK_TRACK); }
 static inline void gs_set_disk_track(Pc *pc, uint8_t v) { gs_wr8(pc, GS_DISK_TRACK, v); }
 static inline uint8_t gs_area_tracks_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_AREA_TRACKS + i)); }
@@ -1467,10 +1573,16 @@ static inline void gs_set_area_tracks_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(
 static inline void gs_set_area_tracks_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_AREA_TRACKS + 2 * i), v); }
 static inline uint8_t gs_cur_area(Pc *pc) { return gs_rd8(pc, GS_CUR_AREA); }
 static inline void gs_set_cur_area(Pc *pc, uint8_t v) { gs_wr8(pc, GS_CUR_AREA, v); }
+static inline uint16_t gs_disk_dx(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_DISK_DX); }
+static inline void gs_set_disk_dx(Pc *pc, uint16_t v) { gs_wr16(pc, GS_DISK_DX, (uint16_t)v); }
 static inline uint16_t gs_screen_seg(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_SCREEN_SEG); }
 static inline void gs_set_screen_seg(Pc *pc, uint16_t v) { gs_wr16(pc, GS_SCREEN_SEG, (uint16_t)v); }
 static inline uint8_t gs_disk_error(Pc *pc) { return gs_rd8(pc, GS_DISK_ERROR); }
 static inline void gs_set_disk_error(Pc *pc, uint8_t v) { gs_wr8(pc, GS_DISK_ERROR, v); }
+static inline uint8_t gs_format_table_b(Pc *pc, unsigned i) { return gs_rd8(pc, (uint16_t)(GS_FORMAT_TABLE + i)); }
+static inline uint16_t gs_format_table_w(Pc *pc, unsigned i) { return gs_rd16(pc, (uint16_t)(GS_FORMAT_TABLE + 2 * i)); }
+static inline void gs_set_format_table_b(Pc *pc, unsigned i, uint8_t v) { gs_wr8(pc, (uint16_t)(GS_FORMAT_TABLE + i), v); }
+static inline void gs_set_format_table_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_FORMAT_TABLE + 2 * i), v); }
 static inline uint16_t gs_scenery_base(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_SCENERY_BASE); }
 static inline void gs_set_scenery_base(Pc *pc, uint16_t v) { gs_wr16(pc, GS_SCENERY_BASE, (uint16_t)v); }
 static inline uint16_t gs_frame_counter(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_FRAME_COUNTER); }
@@ -1505,6 +1617,8 @@ static inline void gs_set_crash_messages_b(Pc *pc, unsigned i, uint8_t v) { gs_w
 static inline void gs_set_crash_messages_w(Pc *pc, unsigned i, uint16_t v) { gs_wr16(pc, (uint16_t)(GS_CRASH_MESSAGES + 2 * i), v); }
 static inline uint16_t gs_spk_pattern(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_SPK_PATTERN); }
 static inline void gs_set_spk_pattern(Pc *pc, uint16_t v) { gs_wr16(pc, GS_SPK_PATTERN, (uint16_t)v); }
+static inline uint8_t gs_spk_restart(Pc *pc) { return gs_rd8(pc, GS_SPK_RESTART); }
+static inline void gs_set_spk_restart(Pc *pc, uint8_t v) { gs_wr8(pc, GS_SPK_RESTART, v); }
 static inline uint8_t gs_sound_state(Pc *pc) { return gs_rd8(pc, GS_SOUND_STATE); }
 static inline void gs_set_sound_state(Pc *pc, uint8_t v) { gs_wr8(pc, GS_SOUND_STATE, v); }
 static inline uint16_t gs_pit_accum(Pc *pc) { return (uint16_t)gs_rd16(pc, GS_PIT_ACCUM); }
