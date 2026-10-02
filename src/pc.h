@@ -52,6 +52,8 @@ typedef struct Pc {
     PitChannel pit[3];
     uint32_t irq0_backlog; /* timer ticks still to deliver after a long step */
     uint32_t pit_cycle_frac;
+    uint64_t pit_synced; /* cpu.cycles up to which the PIT has been advanced (pc_sync_pit) */
+    uint64_t run_target; /* pc_run's target: the end of the current front-end frame */
 
     /* 8255 / keyboard */
     uint8_t port61;
@@ -87,6 +89,18 @@ void pc_free(Pc *pc);
 void pc_boot(Pc *pc);
 /* Runs until cpu.cycles reaches target. */
 void pc_run(Pc *pc, uint64_t target_cycles);
+
+/* Advances the PIT to cpu.cycles in the middle of a step (3.21). A native calls this before
+ * it reprograms a PIT channel, so the new count starts at the right cycle, as it would after
+ * the original's OUT instruction; pc_run then advances only the rest of the step. */
+void pc_sync_pit(Pc *pc);
+
+/* For natives that may batch or decline (3.21): the step running now can go on for any
+ * n < pc_irq_horizon(pc) more cycles without the timer or the keyboard raising an interrupt,
+ * and without crossing the end of the front-end frame (pc_run's target), at an instruction
+ * boundary before the step's end. 0 when an interrupt is already pending (IRR or IRQ0
+ * backlog). Interrupt-enable and PIC masks are not considered (conservative). */
+uint64_t pc_irq_horizon(const Pc *pc);
 
 /* XT set-1 scancode (make code; set bit 7 for break). */
 void pc_key_event(Pc *pc, uint8_t scancode);

@@ -22,6 +22,11 @@
  *   --list-natives      print the native replacement registry and exit
  *   --verify NAME       differential check of native NAME (or "all") against the original on
  *                       every call; prints "verify-summary NAME calls N mismatches M" on quit
+ *   --stats             count the original (non-native) instructions executed and print the total,
+ *                       the native calls and the hottest addresses on quit
+ *   --stats-from FRAME  start counting at that frame (default 0)
+ *   --stats-out FILE    also write every executed address as "LINEAR COUNT" lines (for
+ *                       tools/insn_stats.py, which totals them per routine)
  *   Native options apply in command-line order.
  */
 #define SDL_MAIN_USE_CALLBACKS 1
@@ -64,6 +69,11 @@ typedef struct App {
     bool dump_on_exit;
     bool start_rgb;
     const char *trace_path;
+    bool stats;
+    long stats_from;
+    const char *stats_out;
+    uint32_t *exec_count;
+    uint64_t stats_native_calls0;
 } App;
 
 static uint8_t xt_scancode(SDL_Scancode sc)
@@ -366,7 +376,15 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
             app->trace_path = argv[++i];
         else if (SDL_strcmp(argv[i], "--rgb") == 0)
             app->start_rgb = true;
-        else if (SDL_strcmp(argv[i], "--dump-on-exit") == 0)
+        else if (SDL_strcmp(argv[i], "--stats") == 0)
+            app->stats = true;
+        else if (SDL_strcmp(argv[i], "--stats-from") == 0 && i + 1 < argc) {
+            app->stats = true;
+            app->stats_from = SDL_atoi(argv[++i]);
+        } else if (SDL_strcmp(argv[i], "--stats-out") == 0 && i + 1 < argc) {
+            app->stats = true;
+            app->stats_out = argv[++i];
+        } else if (SDL_strcmp(argv[i], "--dump-on-exit") == 0)
             app->dump_on_exit = true;
         else if (SDL_strcmp(argv[i], "--keys") == 0 && i + 1 < argc)
             parse_keys(app, argv[++i]);
@@ -424,6 +442,11 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         return SDL_APP_FAILURE;
     if (app->trace_path)
         app->pc->cpu.trace = SDL_calloc(1, CPU_MEM_SIZE);
+    if (app->stats) {
+        app->exec_count = SDL_calloc(CPU_MEM_SIZE, sizeof(uint32_t));
+        if (!app->stats_from)
+            app->pc->cpu.exec_count = app->exec_count;
+    }
     native_init(app->pc);
     pc_boot(app->pc);
     if (app->start_rgb)
@@ -499,6 +522,42 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
     return SDL_APP_CONTINUE;
 }
 
+/* --stats: totals and the hottest addresses of original code. */
+static void print_stats(App *app)
+{
+    const uint32_t *n = app->exec_count;
+    uint64_t total = 0;
+    enum { TOP = 20 };
+    uint32_t top[TOP] = { 0 };
+    for (uint32_t a = 0; a < CPU_MEM_SIZE; a++) {
+        total += n[a];
+        if (n[a] > n[top[TOP - 1]]) {
+            int j = TOP - 1;
+            while (j > 0 && n[a] > n[top[j - 1]]) {
+                top[j] = top[j - 1];
+                j--;
+            }
+            top[j] = a;
+        }
+    }
+    SDL_Log("stats: from frame %ld: original instructions %llu, native calls %llu", app->stats_from,
+            (unsigned long long)total, (unsigned long long)(native_total_calls() - app->stats_native_calls0));
+    for (int i = 0; i < TOP && n[top[i]]; i++)
+        SDL_Log("stats:   %05X %10u", top[i], n[top[i]]);
+    if (app->stats_out) {
+        SDL_IOStream *f = SDL_IOFromFile(app->stats_out, "w");
+        if (f) {
+            for (uint32_t a = 0; a < CPU_MEM_SIZE; a++)
+                if (n[a])
+                    SDL_IOprintf(f, "%05X %u\n", a, n[a]);
+            SDL_CloseIO(f);
+        }
+    }
+    app->pc->cpu.exec_count = NULL;
+    SDL_free(app->exec_count);
+    app->exec_count = NULL;
+}
+
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
     App *app = appstate;
@@ -517,6 +576,10 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     }
 
     run_key_script(app);
+    if (app->stats && app->frame == app->stats_from && !pc->cpu.exec_count) {
+        pc->cpu.exec_count = app->exec_count;
+        app->stats_native_calls0 = native_total_calls();
+    }
     if (app->target_cycles < pc->cpu.cycles - (uint64_t)(0.25 * PC_CPU_HZ) || app->target_cycles == 0)
         app->target_cycles = pc->cpu.cycles; /* resync after a stall (or the first frame) */
     app->target_cycles += (uint64_t)(seconds * PC_CPU_HZ * app->speed);
@@ -577,6 +640,8 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
                 (unsigned long long)app->pc->cpu.cycles, app->pc->cga_mode, app->pc->cga_color,
                 app->pc->crtc[1], app->pc->crtc[6], app->pc->crtc[9]);
         native_verify_summary();
+        if (app->exec_count)
+            print_stats(app);
         native_shutdown();
         pc_free(app->pc);
         SDL_free(app->pc);

@@ -22,6 +22,9 @@
 #define NATIVE_CALL_CYCLES 100
 
 typedef void (*NativeFn)(Pc *pc);
+/* A native that may decline a call (3.21): returns false without changing any state, and the
+ * CPU then executes the original instruction at the entry's address instead. */
+typedef bool (*NativeTryFn)(Pc *pc);
 
 /* Linear address range [lo, hi) excluded from the --verify memory comparison. */
 typedef struct NativeRange {
@@ -38,10 +41,18 @@ typedef struct NativeEntry {
     const NativeRange *ignore; /* optional write-only scratch areas, ignore_count entries */
     int ignore_count;
     uint32_t cycles; /* emulated cycles charged per native call; 0 = NATIVE_CALL_CYCLES */
+    NativeTryFn try_fn; /* used instead of fn when set (fn is then NULL) */
+    /* Natives that do not return (3.21: main loop blocks, wait loops). When stop_hi != 0,
+     * --verify runs the original until, after at least one instruction, CS:IP leaves
+     * GAME_CS:[stop_lo, stop_hi) or reaches one of `stops` (0-terminated list, e.g. the loop
+     * head), instead of until it returns. The native must end at the same CS:IP. */
+    uint16_t stop_lo, stop_hi;
+    const uint16_t *stops;
+    bool exact_cycles; /* --verify also compares the cycles charged with the original's */
 
     /* run-time state and statistics */
     bool verify;
-    uint64_t calls, mismatches, cap_hits;
+    uint64_t calls, mismatches, cap_hits, declines;
     uint64_t orig_cycles_min, orig_cycles_max; /* measured by --verify */
 } NativeEntry;
 
@@ -54,6 +65,8 @@ void native_list(void);
 /* Prints calls and mismatches of every entry being verified. */
 void native_verify_summary(void);
 void native_shutdown(void);
+/* Sum of the calls of every entry (for --stats). */
+uint64_t native_total_calls(void);
 
 /* Calls another native's C implementation from inside a native, as a near CALL would:
  * the caller has already pushed the return address, the callee's RET pops it, and the
@@ -62,6 +75,10 @@ void native_shutdown(void);
  * the original routine itself. Under --verify the callee's writes are part of the outer
  * native's write log, so nested calls are checked as one unit with their caller. */
 bool native_call(Pc *pc, uint16_t off);
+
+/* True inside a --verify run of the native, or nested in a native that keeps a write log
+ * (the natives' interrupt hand-back): the call must then run in full, not decline or batch. */
+static inline bool native_logged(const Pc *pc) { return pc->cpu.write_log != NULL; }
 
 /* ---- helpers for native routines -------------------------------------------- */
 
