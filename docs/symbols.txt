@@ -682,3 +682,45 @@ var 0618:2054 editor_alt word        ; [code] editor_values+0B: altitude (feet)
 var 0618:310F eye_p1 table           ; [code] eye-space point 1: x, y, z words (view_matrix+18)
 var 0618:311B eye_p2 table           ; [code] eye-space point 2: x, y, z words
 var 0618:3127 eye_p3 table           ; [code] eye-space point 3: x, y, z words
+
+# ---- from docs/subphases/3.16.md (editor, presets, start-up disk check) --------------------
+code 0050:368A editor_next_row       ; [code] cursor down one row (Enter, =); past row 2Ch: next page, page 4 wraps to 0
+code 0050:369F editor_first_page     ; [code] page 0: page text, fields, cursor on row 2
+code 0050:36C1 editor_prev_row       ; [code] cursor up one row ('-'); above row 2: other page, row 2Ch
+code 0050:36E3 editor_cursor_clear   ; [code] blanks the "-->" cursor of editor_row
+code 0050:36F4 editor_row_ptr        ; [code] BX = [editor_row_offsets + editor_row] (row not doubled), also to [2020]
+code 0050:3909 editor_page_text      ; [code] 1000 bytes DS:SI -> ES:0 as text cells with attribute 0Fh
+code 0050:3916 editor_commit         ; [code] after typing: read fields, then user-mode recall / store by the User mode field
+code 0050:39B2 editor_field_next     ; [code] next {width, row, value} record of the page's field list -> 2015, 2020, 2022
+code 0050:39DB editor_draw_page      ; [code] editor_page_text of editor_page_texts[editor_page]
+code 0050:3B29 speaker_off           ; [code] spk_pattern = 0, port 61h bits 0-1 cleared
+code 0050:3C2F editor_scale_values   ; [code] DI = 0: internal -> editor units (capture), DI = 1: back (apply); winds, clouds, shears
+code 0050:3C6C editor_scale_wind     ; [code] wind layer at BX: DI = 0 speed+100*turbulence, direction to degrees; DI = 1 back (DIV can overflow -> INT 0)
+code 0050:4DC6 int0_divide_error     ; [code] AX = 7FFFh (8001h if DX^BX < 0), IRET to the instruction after the DIV
+code 0050:60F8 startup_disk_reset    ; [code] disk_reset; CL = 0; DI = SI = 40B0h + DS*16; ES = AX = 0
+var 0618:03B0 stream_pos word        ; [code] byte index in the 4 KB track buffer (B800); 0FFF: read a track next, FFFF: write
+var 0618:03B2 track_verify byte      ; [code] bit 0 set by disk_format_write_track: checksum read-back after the write
+var 0618:03C0 disk_dx word           ; [code] DX of the INT 13h calls (drive 0, head 0)
+var 0618:03C5 format_table table     ; [code] 8 x {track, head, sector, size} for INT 13h AH=05
+var 0618:0547 spk_restart byte       ; [code] 1 from editor_apply_state: the timer handler restarts the engine note once (sound on)
+var 0618:2010 editor_up byte         ; [code] '-' pressed: editor_main moves the cursor up
+var 0618:2011 editor_exit byte       ; [code] Esc pressed: editor_main leaves through editor_apply_state
+var 0618:2018 editor_typed byte      ; [code] digits typed in the field (editor_main then calls editor_commit)
+var 0618:2020 editor_ptr word        ; [code] row screen offset (editor_row_ptr), value address (field_next) or preset slot address
+var 0618:2022 editor_field_scr word  ; [code] screen offset of the field's digits (row offset + 0Ah)
+var 0618:2024 editor_digit byte      ; [code] last digit typed
+var 0618:2026 editor_field_rec word  ; [code] current record of the page's field list
+var 0618:2028 editor_saved_row byte  ; [code] editor_row kept across editor_commit / redraws
+var 0618:202A apply_phase byte       ; [code] (frame_counter & 1Fh) - 10h, set by editor_apply_state (read at 4FCE)
+var 0618:202B editor_ndigits byte    ; [code] digits typed so far
+var 0618:2032 editor_cell word       ; [code] text cell of the next digit (5..0Ah; times 2 = byte offset)
+var 0618:2035 demo_request byte      ; [code] start-up menu choice A (demo): ORed into demo_mode by editor_apply_state
+var 0618:204D editor_demo byte       ; [code] editor field "Demonstration mode"
+var 0618:204F comm_rate byte         ; [code] editor field "Communication rate", added to [0542] by the timer handler (ATIS)
+var 0618:206B cloud_tops table       ; [code] cloud layer 2 tops / bottoms, layer 1 tops / bottoms (4 words, then shear_tops)
+var 0618:2089 reliability byte       ; [code] editor field "Reliability factor"
+var 0618:208A editor_usermode byte   ; [code] editor field "User mode": 0-9 recall, same again stores to n+10, 110-129 store to n-100
+var 0618:208E editor_field_lists table ; [code] 2 words: field list of page 0 and page 2; records {width, row, offset from 2049}, 0 ends
+var 0618:2110 editor_page_texts table ; [code] 2 words: 40x25 text of page 0 and page 2
+var 0618:28E4 editor_row_offsets table ; [code] text-screen offset per row byte index (2 per line: 32h, 82h, ...)
+var 0618:3A21 backup_option byte     ; [code] 1 as shipped: a master disk offers the backup; check_master_disk read errors count as a copy
