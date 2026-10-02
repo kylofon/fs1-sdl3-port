@@ -36,6 +36,11 @@ SDL3 3.4 or newer is used if it is installed. Otherwise CMake downloads and buil
 
     cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
     cmake --build build
+    cmake -S . -B build-emu -G Ninja -DCMAKE_BUILD_TYPE=Release -DFS1_EMULATOR=ON
+    cmake --build build-emu
+
+`build/` is the game (no 8086 interpreter, 3.22). The verification tools run original code, so they
+use the emulator build in `build-emu/` (or the executable named by `FS1_EXE`).
 
 ## 3. Running headless
 

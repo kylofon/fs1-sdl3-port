@@ -1367,8 +1367,11 @@ static void clip_isect(Pc *pc, uint16_t base, uint16_t pa, uint16_t pb)
     run(pc, base, (uint16_t)(base + 6));
     REG(AX) = 0;
     bool lsb = REG(DX) & 1;
-    REG(DX) = (uint16_t)((int16_t)REG(DX) >> 1);
+    REG(DX) = (uint16_t)f_logic(pc, (uint16_t)((int16_t)REG(DX) >> 1), 1); /* SAR: SZP, OF = AF = 0 */
     REG(AX) = (uint16_t)(lsb ? 0x8000 : 0);
+    set_flag(pc, F_CF, false); /* RCR AX,1: CF = old AX bit 0, OF = new bit 15 ^ bit 14 */
+    set_flag(pc, F_OF, lsb);
+    /* (the flags matter only to a divide error: INT 0 pushes them) */
     idiv_bx(pc, (uint16_t)(base + 6));
     run(pc, (uint16_t)(base + 8), (uint16_t)(base + 0x16));
     REG(BP) = REG(AX);

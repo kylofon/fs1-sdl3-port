@@ -39,7 +39,7 @@ Symbols from the notes are merged with `python tools/merge_symbols.py`.
 | 3.9 | merged | #8 | [3.9](subphases/3.9.md) |
 | 3.14 | merged | #11 | [3.14](subphases/3.14.md) |
 | 3.12 | merged | (rebuilt from #13) | [3.12](subphases/3.12.md) |
-| 3.21 | PR open | – | [3.21](subphases/3.21.md) |
+| 3.22 | PR open | – | [3.22](subphases/3.22.md): the default build has no 8086 interpreter |
 | 3.21 | merged | #21 | [3.21](subphases/3.21.md) |
 | 3.20 | merged | #20 | [3.20](subphases/3.20.md) |
 | 3.19 | merged | #19 | [3.19](subphases/3.19.md) |
@@ -78,7 +78,7 @@ Symbols from the notes are merged with `python tools/merge_symbols.py`.
 | **3.19** | Sound | Engine-note and tone generation in C straight to SDL audio, replacing the emulated timer and speaker path | Sounds match by ear and in a waveform comparison |
 | **3.20** | Scenery loading | Parse the scenery tracks from the `.ima` at startup; replace `select_scenery_area` and the disk streaming | All 5 areas load with no emulated disk access |
 | **3.21** | Main loop and timer in C | `main_loop` and `int8_timer` logic in C, with a fixed simulation timestep matching the original rates | The game runs with the 8086 core executing nothing during flight |
-| **3.22** | Retire the emulator | Remove `cpu8086.c`, `pc.c` and the BIOS layer; keep the original-code path only as an optional verification build | The default build has no x86 emulation; everything works |
+| **3.22** (done) | Retire the emulator | Remove `cpu8086.c`, `pc.c` and the BIOS layer; keep the original-code path only as an optional verification build | The default build has no x86 emulation; everything works |
 
 ## How to add a native (framework from 3.0)
 

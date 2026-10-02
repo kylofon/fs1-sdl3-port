@@ -3,9 +3,14 @@
 A port of *Microsoft Flight Simulator* 1.0x (IBM PC, 1982, by Bruce Artwick / subLOGIC) to modern
 platforms using SDL3.
 
-**Status:** Phase 1. The original program boots and flies inside an embedded minimal PC
-(8088 + CGA + PIT/PIC + keyboard + speaker, high-level BIOS, no IBM ROM).
-See [docs/PORT_PLAN.md](docs/PORT_PLAN.md).
+**Status:** Phase 3 done (3.22). Every routine of the original program is reimplemented in C, and the
+default build runs the game from boot to quit without an 8086 interpreter: a C scheduler calls the C
+routines and raises the timer and keyboard interrupts between them, the boot loader is decoded in C, and
+the engine note and tones are made from the game's sound model. The 8088 memory image and register file
+remain as the routines' data model, and the screen is drawn from the CGA memory. The original code still
+runs, for verification, in the optional emulator build (an embedded minimal PC: 8088 + CGA + PIT/PIC +
+keyboard + speaker, high-level BIOS, no IBM ROM).
+See [docs/PORT_PLAN.md](docs/PORT_PLAN.md) and [docs/PHASE3_PLAN.md](docs/PHASE3_PLAN.md).
 
 ## Playing
 
@@ -60,10 +65,13 @@ Dev options: `--frames N` quits after N frames of 1/60 s, `--screenshot FILE.bmp
 `--shot-at N` also saves `FILE_N.bmp` at frame N, `--keys "300:F2,400:Keypad 8*30"` scripts key presses,
 `--type TEXT` types TEXT one key per second, `--rgb` starts in RGB mode, `--dump-on-exit` dumps memory,
 and `--trace FILE` accumulates an execution/data trace map (see [docs/PROGRAM_MAP.md](docs/PROGRAM_MAP.md)).
-Native replacements of original routines (phase 3): `--list-natives` prints them, `--native-off NAME|all`
-runs the original code instead, `--native-on NAME|all` enables a default-off one, and `--verify NAME|all`
-runs both the original and the native on every call and reports differences
-(`python tools/verify_campaign.py` does this over all campaign sessions; see [docs/PHASE3_PLAN.md](docs/PHASE3_PLAN.md)).
+Native replacements of original routines (phase 3): `--list-natives` prints them and `--stats` prints how
+many original instructions ran (always 0 in the default build). The options that run original code need the
+emulator build (below): `--native-off NAME|all` runs the original code instead, `--verify NAME|all` runs
+both the original and the native on every call and reports differences (`python tools/verify_campaign.py`
+does this over all campaign sessions; see [docs/PHASE3_PLAN.md](docs/PHASE3_PLAN.md)), `--trace FILE`,
+`--csched` runs the emulator build with the default build's C scheduler, and `--check-boot` compares the
+C boot with the original loader.
 
 ## You need the original disk
 
@@ -86,6 +94,20 @@ Install the MSYS2 packages `mingw-w64-x86_64-gcc`, `mingw-w64-x86_64-cmake`, `mi
 
 On other platforms, any SDL3 install that CMake can find through `find_package(SDL3)` works.
 
+### Build options
+
+| CMake option | Default | What it builds |
+|---|---|---|
+| `FS1_EMULATOR` | `OFF` | `ON` adds the 8086 interpreter (`src/cpu8086.c`), the emulated PIC/PIT/ports and BIOS, the original boot loader, and the options that run original code (`--verify`, `--native-off`, `--trace`, `--csched`, `--check-boot`). This build starts on the emulated PC with all natives on, as before 3.22. |
+
+The verification tools (`tools/verify_campaign.py`, `trace_campaign.py`, `insn_stats.py`, `scenery_sessions.py`,
+the cycle-table generators) need the emulator build. They use `build-emu/` (or the executable named by the
+`FS1_EXE` environment variable):
+
+    cmake -S . -B build-emu -G Ninja -DCMAKE_PREFIX_PATH=C:/msys64/mingw64 -DFS1_EMULATOR=ON
+    cmake --build build-emu
+    python tools/verify_campaign.py
+
 ## Cloud sessions
 
 See [docs/CLOUD.md](docs/CLOUD.md) for building and verifying on a headless Linux machine.
@@ -93,6 +115,9 @@ See [docs/CLOUD.md](docs/CLOUD.md) for building and verifying on a headless Linu
 ## Layout
 
 - `src/`: the port (C11, SDL3)
+  - `sched.c`: the C scheduler and the boot in C; `natives/`: the original routines in C, one file per area
+  - `cpu_core.c`: the 8086 register file and memory accessors (the natives' data model)
+  - `cpu8086.c`, and the emulated hardware in `pc.c`: the emulator build only
 - `tools/`: Python helpers
   - `pc_loadstream.py` decodes the PC boot loader stream and dumps the loaded memory image
   - `dsk_catalog.py` and `dis6502.py` are for the Apple II reference image
