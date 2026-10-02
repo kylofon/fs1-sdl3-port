@@ -41,7 +41,7 @@ code 0050:09AB key_dispatch          ; [code] scancode -> key_handlers, or edito
 
 # ---- key handlers (table key_handlers; behaviour verified with scripted keys) ----------------
 code 0050:0A04 key_esc_editor        ; [key]
-code 0050:0A0A key_mag_off           ; [key] 1..5: magnetos off/L/R/both/start
+code 0050:0A0A key_mag_off           ; [key] '1'; key table at 05B1 starts at scancode 02
 code 0050:0A0D key_set_magnetos
 code 0050:0A21 key_mag_left
 code 0050:0A26 key_mag_right
@@ -64,7 +64,7 @@ code 0050:0D4B key_c_com             ; [key]
 code 0050:0D6E key_v_obi             ; [key]
 code 0050:0D74 key_n_nav             ; [key]
 code 0050:0D92 key_m_nop             ; [code] empty
-code 0050:0D93 key_period_brakes     ; [key]
+code 0050:0D93 key_period_brakes     ; [key] on the ground: airspeed -= 0100h, floor 0 (also from flight_integrate after a reset)
 code 0050:0DA8 key_kpstar_reset      ; [key] recall + apply current user-mode preset
 code 0050:0DAF key_alt_slew_level    ; [key] slew mode only
 code 0050:0DC5 key_space_guns        ; [key] war mode
@@ -306,7 +306,7 @@ var 0618:39D7 cga_mode_ctrl byte     ; [code] 1A colour (A, C), 1E B/W (B)
 # ---- from docs/subphases/3.2.md --------------------
 code 0050:1508 fmt_course_digits     ; [code] AL (2-degree units) -> DL hundreds, AL tens, AH units (ASCII)
 code 0050:3553 fmt_dec4_byte         ; [code] AH = 0, then fmt_dec4
-code 0050:3555 fmt_dec4              ; [code] AX 0..32767 -> CL CH AL AH = 4 ASCII digits
+code 0050:3555 num_to_3digits        ; [code] AX -> CL hundreds, CH tens.. ASCII (div 1000, div 100, AAM)
 var  0618:2012 editor_value          ; [code] 24-bit LE value being converted
 var  0618:202C editor_digits         ; [code] 6 ASCII digits, most significant first
 var  0618:2036 pow10_lo              ; [code] 100000..1 low bytes; mid at 203C, high at 2042
@@ -407,16 +407,16 @@ code 0050:0742 field_elev_follow     ; [code] [0906] = field_elevation when slow
 code 0050:25D4 marker_lamps          ; [code] shifts out marker flags 1A17/1A1B/1A19
 var 0618:03F2 com_bcd word           ; [code] tuned COM, BCD (124.85 -> 2485h)
 var 0618:03FF nav_bcd word           ; [code] tuned NAV, BCD (109.15 -> 0915h)
-var 0618:0406 ground_service byte    ; [code] set by scenery: 1 refuel, 2 re-arm (war) when stopped
+var 0618:0406 war_reset byte         ; [code] 1 re-arm when stopped, 2 also reload ammo/bombs
 var 0618:0412 time_of_day word       ; [code] 1 day, 2 dusk, 4 night
 var 0618:0416 overlay_fill word      ; [code] fill byte for view_overlay_marks, set by scenery?
 var 0618:041D blink_bits word        ; [code] rotated every frame; scenery tests it for flashing lights
 var 0618:0571 demo_ptr word          ; [code] current demo-script byte
 var 0618:0900 alt_display word       ; [code] altitude word + [0906], used for the band marker
-var 0618:0906 ground_elev word       ; [code] altimeter baseline, follows field_elevation
+var 0618:0906 ground_elev word       ; [code] B4h at Meigs
 var 0618:090A field_elevation word   ; [code] metres, stored by scenery per airport
-var 0618:0915 heading_offset word    ; [code] set per area (magnetic variation?)
-var 0618:0917 mag_variation word     ; [code] set per area, binary angle (LA 0AAA = 15 deg)
+var 0618:0915 wind_dir_offset word
+var 0618:0917 wind_gust_offset word
 var 0618:1A19 marker_a byte          ; [code] marker beacon flag set by scenery
 var 0618:1A1B marker_b byte          ; [code] marker beacon flag set by scenery
 var 0618:1A1D ils_param word         ; [code] set by scenery after an ILS station (glide slope?)
@@ -493,14 +493,71 @@ var 0618:0880 cl_ofs_right word
 var 0618:0882 flaps_cl word
 var 0618:0886 lift_left word
 var 0618:0888 lift_right word
-var 0618:0892 roll_moment word
+var 0618:0892 roll_moment word       ; [code] from flight_forces
 var 0618:089A sin_pitch word
-var 0618:089C sin_bank word
+var 0618:089C crab_a word            ; [code] track = heading + hi([089C] * [08A2])
 var 0618:08A0 weight_along word      ; [code] weight*sin(pitch), part of drag
-var 0618:08A2 slip_roll word
+var 0618:08A2 crab_b word
 var 0618:08A6 normal_force word
 var 0618:08AA inv_airspeed word      ; [code] div_q15(0280:0000, airspeed)
 var 0618:08AC pitch_accel word
 var 0618:08B0 accel_to_pitch word
 var 0618:0558 stalled byte           ; [code] write only
 var 0618:1E83 wing_damage byte       ; [code] 1 = left wing gone (war)
+
+
+# ---- from docs/subphases/3.14.md --------------------
+code 0050:1BB0 war_rearm             ; [code] magnetos OK, tanks 23h, faults 0, panel masks, enemy records
+code 0050:1CEC slew_to_editor_pos    ; [code] pos_north/east integer + 4000h -> 2050/2052
+code 0050:1CFF slew_speed            ; [code] control word -> 2^n-1 style speed, AX, DX = sign
+code 0050:2EDB engine_stop           ; [code] 1DD6 = 0, 1DCB = 0, running = 0
+code 0050:2EEC engine_rpm_step       ; [code] engine_rpm one step toward 1DC1, reprograms the PIT (20C0)
+code 0050:3C9F alt_from_editor       ; [code] altitude = (editor feet + 9) * 0.305 - [0906], min 3
+var 0618:0830 climb_step word        ; [code] altitude change this frame
+var 0618:083A view_pitch_trim word   ; [code] hi(AX * [08C6]); AX is a leftover (original bug)
+var 0618:0842 horiz_step word
+var 0618:0846 cos_track word
+var 0618:0860 east_step word
+var 0618:0868 flaps_view word        ; [code] view pitch term, airborne only
+var 0618:086C frame_dist word        ; [code] airspeed * dt
+var 0618:086E on_ground_prev byte
+var 0618:088A touchdown_view word    ; [code] vs_high << 9 on touchdown
+var 0618:088E mass_term2 word        ; [code] [08C2] / weight
+var 0618:0890 inv_roll_inertia word  ; [code] [08C4] / weight
+var 0618:0894 north_step word
+var 0618:0896 prev_time dword        ; [code] tick18:pit_accum of the last frame
+var 0618:089E sin_track word
+var 0618:08B6 fuel_weight word
+var 0618:08C0 mass_constants table   ; [code] 0329, 02BC, 2EE0
+var 0618:08D6 level_rate_pos word    ; [code] +14h
+var 0618:08D8 level_rate_neg word    ; [code] -14h
+var 0618:08E0 thrust_k word          ; [code] 0468h
+var 0618:08EE empty_weight word      ; [code] 09C4h
+var 0618:08F6 not_slew byte          ; [code] 1 after a normal frame; slew centres the controls once
+var 0618:08F9 alt_reset byte         ; [code] 0C after editor_apply_state; frames re-applying the editor altitude
+var 0618:0902 ias_knots word         ; [code] airspeed * 28Fh >> 16 (upd_airspeed)
+var 0618:1DC1 rpm_target byte
+var 0618:1DC2 engine_power word
+var 0618:1DC4 oil_temp_rate word
+var 0618:1DC6 oil_press_rate word
+var 0618:1DC8 engine_faults byte     ; [code] 1 oil leak, 2 no oil pressure (1|2 cap power 0FFF), 4/8 tank leaks
+var 0618:1DC9 fuel_flow byte         ; [code] FF; x throttle high byte per call
+var 0618:1DCA carb_ice byte          ; [code] 14h from sub_04FB (season 2, low throttle)
+var 0618:1DCB rpm_deficit byte
+var 0618:1DCC fuel_left 24-bit       ; [code] gauge byte 1DCE
+var 0618:1DCF fuel_right 24-bit      ; [code] gauge byte 1DD1
+var 0618:1DD2 mag_switches word      ; [code] L, R
+var 0618:1DD4 mag_ok word            ; [code] L, R
+var 0618:1DD6 engine_sound word      ; [code] A140h running
+var 0618:1DD8 engine_running byte
+var 0618:1DD9 oil_temp word
+var 0618:1DDB oil_press word
+var 0618:1DDD rpm_by_power table     ; [code] 32 bytes, by power >> 10
+var 0618:1DFD rpm_windmill table     ; [code] 32 bytes, by IAS >> 4
+var 0618:1E22 takeoff_spot word
+var 0618:1E26 turbulence byte
+var 0618:1E2B gust_phase byte
+var 0618:204C reality_mode byte
+var 0618:206A season byte
+var 0618:2073 shear_tops table       ; [code] 3 words, altitude units at run time
+var 0618:2079 wind_layers table      ; [code] 4 x (speed lo / turbulence hi, direction): 3, 2, 1, surface
