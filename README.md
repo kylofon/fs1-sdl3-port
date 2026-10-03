@@ -12,6 +12,8 @@ runs, for verification, in the optional emulator build (an embedded minimal PC: 
 keyboard + speaker, high-level BIOS, no IBM ROM).
 See [docs/PORT_PLAN.md](docs/PORT_PLAN.md) and [docs/PHASE3_PLAN.md](docs/PHASE3_PLAN.md).
 
+**Plan and tracker:** [PLAN.md](PLAN.md) (subtasks, model per subtask, user tasks); `python tools/plan_site.py` renders it with token usage to `site/index.html`.
+
 ## Playing
 
 At the menu, pick **A** (colour composite) for the authentic colours, then **B** (regular flight).
