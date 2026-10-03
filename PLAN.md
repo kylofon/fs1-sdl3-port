@@ -23,6 +23,7 @@ remove it when it is done; subtasks marked `U<n> pending` are added automaticall
 
 | Task | What to do | For | Time |
 |---|---|---|---|
+| U3 — rare-path recordings | In the emulator build (`build-emu/fs1.exe --verify all`) fly: shoot down an enemy / get hit in war mode, an engine failure or empty tank, carb ice, ≥512 kt. Send the log lines containing `mismatch` (or "none"). Details: section U3 below | S3F.4 | 15 min |
 
 ## Status
 
@@ -71,7 +72,7 @@ under each table, never between rows.
 | S3F.1 | Docs refresh after 3.22: README status/build section, `PROGRAM_MAP.md` "what this means for phase 3" → current architecture (C scheduler, natives, state.h), `PORT_PLAN.md` phase list → this file | H | S | done 2026-10-03 |
 | S3F.2 | Emulator build sound: audio with natives on is ~62 % off the original (IRQ0 backlog vs int8 native). Find and fix, `tools/audio_compare.py` must pass | S | M | done 2026-10-03 |
 | S3F.3 | `scenery_interp` charges 30 cycles less than the original on the horizon capture program (3.5 notes); fix accounting, `--verify` with `exact_cycles` | S | S | dropped 2026-10-03 (see Notes) |
-| S3F.4 | Coverage of never-run paths: rare scenery opcodes (05 06 08 0D 0E 10 11 15 2A 34), carb ice, engine faults/empty tanks, ≥512 kt, war kills/explosions/damage. Uses U3 recordings; verify in the emulator build | S | M | needs U3 |
+| S3F.4 | Coverage of never-run paths: rare scenery opcodes (05 06 08 0D 0E 10 11 15 2A 34), carb ice, engine faults/empty tanks, ≥512 kt, war kills/explosions/damage. Uses U3 recordings; verify in the emulator build | S | M | U3 pending |
 | S3F.5 | `disk_backup` (5F54): native, or hide the backup option in the default build; document | H | S | |
 
 Notes:
