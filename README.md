@@ -39,8 +39,10 @@ verified by scripted key presses against the running game, except where marked *
 | A | Clear the altimeter correction |
 | C, N, V, T | Select COM frequency, NAV frequency, OBI course, transponder digit (press again for the next field) |
 | `-` / `=` | Decrease / increase the selected item |
-| Num Lock / Scroll Lock | Radar (top-down) view on / off; `-`/`=` zoom the radar |
+| Num Lock | Radar (top-down) view on/off toggle (port: sends Scroll Lock when the radar is on); `-`/`=` zoom the radar |
+| Scroll Lock | Radar view off |
 | Scroll Lock, then a keypad key | Choose the view direction (with the radar off) |
+| Left Shift + keypad key | Same as Scroll Lock, then that key (port addition) |
 | P | Pause |
 | KP\* | Restart the flight from the initial position |
 | Esc | "MFS Edit Mode" editor (positions, slew, Europe 1917 war mode, …) |

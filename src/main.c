@@ -41,6 +41,7 @@
 #include "disk.h"
 #include "native.h"
 #include "pc.h"
+#include "game/state.h"
 
 #define WINDOW_W 960
 #define WINDOW_H 720
@@ -522,6 +523,14 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     return SDL_APP_CONTINUE;
 }
 
+/* Keypad keys that pick a view direction after Scroll Lock: KP7 8 9 4 5 6 1 2 3. */
+static bool is_view_key(uint8_t xt)
+{
+    return (xt >= 0x47 && xt <= 0x49) || (xt >= 0x4B && xt <= 0x4D) || (xt >= 0x4F && xt <= 0x51);
+}
+
+static uint8_t numlock_sent = 0x45; /* XT scancode the last Num Lock press was sent as */
+
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 {
     App *app = appstate;
@@ -548,10 +557,29 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
                 dump_memory(app);
             break;
         }
+        if (event->key.scancode == SDL_SCANCODE_NUMLOCKCLEAR && !event->key.repeat) {
+            /* Port convenience: modern keyboards lack Scroll Lock, so Num Lock toggles the
+             * radar. With the radar on, send Scroll Lock (radar off) instead. */
+            numlock_sent = cpu_read8(&app->pc->cpu, cpu_linear(GAME_DS, GS_RADAR_VIEW)) ? 0x46 : 0x45;
+            pc_key_event(app->pc, numlock_sent);
+            break;
+        }
+        if ((event->key.mod & SDL_KMOD_LSHIFT) && !event->key.repeat
+            && is_view_key(xt_scancode(event->key.scancode))
+            && !cpu_read8(&app->pc->cpu, cpu_linear(GAME_DS, GS_RADAR_VIEW))) {
+            /* Port convenience: Left Shift + keypad = the original Scroll Lock, keypad key
+             * (choose the view direction). Tap Scroll Lock first, then send the key. */
+            pc_key_event(app->pc, 0x46);
+            pc_key_event(app->pc, 0x46 | 0x80);
+        }
         if (xt_scancode(event->key.scancode))
             pc_key_event(app->pc, xt_scancode(event->key.scancode)); /* repeats = typematic */
         break;
     case SDL_EVENT_KEY_UP:
+        if (event->key.scancode == SDL_SCANCODE_NUMLOCKCLEAR) {
+            pc_key_event(app->pc, numlock_sent | 0x80);
+            break;
+        }
         if (xt_scancode(event->key.scancode))
             pc_key_event(app->pc, xt_scancode(event->key.scancode) | 0x80);
         break;
