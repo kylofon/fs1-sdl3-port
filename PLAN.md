@@ -23,8 +23,6 @@ remove it when it is done; subtasks marked `U<n> pending` are added automaticall
 
 | Task | What to do | For | Time |
 |---|---|---|---|
-| U1 | Manual PDF → `docs\manual.pdf` (+ `pdftotext`), see U1 below | all | 10 min |
-| U2 | Playtest the current build (checklist in U2 below), report with the U5 format | S4.x | 20 min |
 
 ## Status
 
@@ -113,14 +111,14 @@ Notes:
 
 ## User tasks (cheap for you, expensive for a model)
 
-### U1 — Manual and key card (now, 10 min)
+### U1 — Manual and key card (done 2026-10-03)
 The manual answers rule questions that would otherwise cost reverse-engineering sessions.
 1. Find the *Microsoft Flight Simulator* 1.0x manual (PDF) and save it as `docs\manual.pdf`. PDFs are
    git-ignored.
 2. If you have Poppler, run `pdftotext -layout docs\manual.pdf docs\manual.txt`. Agents then grep the
    text instead of reading the PDF.
 
-### U2 — Playtest the current build (now, 20 min)
+### U2 — Playtest the current build (done 2026-10-03)
 Build: `cmake --build build`, run `build\fs1.exe`. Check:
 - start-up and menus;
 - engine sound across throttle;
