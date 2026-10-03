@@ -13,8 +13,8 @@ Each session runs twice: with all natives on, and with NAMES (comma separated, d
 3.19 sound natives) off. The speaker events, the audio rendered from them (pc_speaker_render's
 model on one global sample grid) and the final screenshot must be identical; the tool exits 1
 on any difference. The audio as played is compared too, for information: main.c renders it per
-frame, a frame ends at the first step boundary past its cycle budget, and a native (one CPU
-step) moves that boundary, so an edge can land one sample earlier or later there. --wav DIR also writes both renderings as 16-bit WAV files for listening;
+frame, and the sound natives are handed back when they span the end of a frame (S3F.2), so it
+is identical as well. --wav DIR also writes both renderings as 16-bit WAV files for listening;
 --keep DIR keeps the raw files there.
 --csched (3.22) compares the emulated PC (all natives on) with the C scheduler instead of natives
 on/off ("off" is then the C-scheduler run). The two are not expected to be identical: with the

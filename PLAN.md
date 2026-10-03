@@ -19,7 +19,7 @@ Tracker: `python tools/plan_site.py` → `site/index.html` (this plan plus token
 ## Status
 
 - **Done:** Phases 0–3 (S0.1, S1.1, S2.1, S3.0–S3.22). Default build: 0 original instructions.
-- **Next:** S3F.1 and S4.1. User tasks that can start now: U1, U2.
+- **Next:** S4.1 and S3F.3. User tasks that can start now: U1, U2.
 - Escalation rule: a subtask that fails twice on Sonnet → new Opus session with a 5-line note
   (symptom, file, what was tried). Never carry an old transcript over.
 
@@ -61,7 +61,7 @@ under each table, never between rows.
 | Id | Task | Model | Size | Status |
 |---|---|---|---|---|
 | S3F.1 | Docs refresh after 3.22: README status/build section, `PROGRAM_MAP.md` "what this means for phase 3" → current architecture (C scheduler, natives, state.h), `PORT_PLAN.md` phase list → this file | H | S | done 2026-10-03 |
-| S3F.2 | Emulator build sound: audio with natives on is ~62 % off the original (IRQ0 backlog vs int8 native). Find and fix, `tools/audio_compare.py` must pass | S | M | |
+| S3F.2 | Emulator build sound: audio with natives on is ~62 % off the original (IRQ0 backlog vs int8 native). Find and fix, `tools/audio_compare.py` must pass | S | M done 2026-10-03 |
 | S3F.3 | `scenery_interp` charges 30 cycles less than the original on the horizon capture program (3.5 notes); fix accounting, `--verify` with `exact_cycles` | S | S | |
 | S3F.4 | Coverage of never-run paths: rare scenery opcodes (05 06 08 0D 0E 10 11 15 2A 34), carb ice, engine faults/empty tanks, ≥512 kt, war kills/explosions/damage. Uses U3 recordings; verify in the emulator build | S | M | needs U3 |
 | S3F.5 | `disk_backup` (5F54): native, or hide the backup option in the default build; document | H | S | |
@@ -87,6 +87,9 @@ The CGA path stays as "authentic" mode.
 | S4.12 | Release v1.0: packaging, README with screenshots taken by the user, CHANGELOG | H | S | |
 
 Notes:
+- S3F.2: the "62 % off" was already gone; the remaining difference was frame timing. The front end injects keys
+  at a frame start and a frame ends at the first step past its budget, so the int8_timer native (one step) moved the
+  key's latch by 12 cycles. `sound.c` `entry_run` now hands a native back when it spans (or starts past) the frame end.
 - S4.2 must keep the authentic path byte-identical: recording is a side channel, and the
   `verify_campaign.py` gate (emulator build) still applies to every natives change.
 - S4.7 and S4.10 change what the player sees; they are options (default: authentic behaviour).

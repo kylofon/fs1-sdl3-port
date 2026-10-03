@@ -36,7 +36,9 @@
  * original routine, with interrupts). int8_timer runs with IF clear, so a timer tick due
  * inside it would only be delivered after its IRET either way; but the keyboard is latched
  * by the step in which it falls due, which sets the time of the next latch, so the hand-back
- * is kept for every entry. int8_timer is also handed back when IF is set at its EOI: a callee
+ * is kept for every entry. A native that spans the end of the front-end frame is handed back
+ * too (S3F.2), so frames and the keys injected at their start fall where they do with the
+ * original. int8_timer is also handed back when IF is set at its EOI: a callee
  * that ends with STI (atis_tick draws through blit_or) lets the original take a pending
  * interrupt between the EOI and the IRET. Under --verify (and nested in a native with a log)
  * they run plain. */
@@ -608,8 +610,12 @@ static void entry_run(Pc *pc, void (*body)(Pc *), bool irq0)
             t0.loaded = false; /* irq_due: the keyboard only */
             backlog = 0;
         }
+        /* A frame ends at the first step boundary at or past its budget, and the front end injects
+         * keys there: a native that spans the end of the frame (or starts past it, after an
+         * interrupt entry crossed it) moves it, so it is handed back. */
+        bool frame_end = start >= pc->run_target || c->cycles > pc->run_target;
         if (!irq_log.overflow &&
-            (if_at_eoi || held_due || irq_due(pc, &t0, backlog, frac, start, c->cycles - start))) {
+            (if_at_eoi || held_due || frame_end || irq_due(pc, &t0, backlog, frac, start, c->cycles - start))) {
             for (uint32_t i = irq_log.count; i-- > 0;)
                 pc->mem[irq_log.addr[i]] = irq_log.old[i];
             *c = pre;
