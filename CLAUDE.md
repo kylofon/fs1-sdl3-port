@@ -7,6 +7,8 @@ Token budget rules:
 - Work on ONE subtask per session (PLAN.md id, e.g. `S4.3`). Read only PLAN.md "Status" + that
   subtask, not the whole file. When done: update its status cell (`done YYYY-MM-DD`, `U4 pending`),
   run `python tools/plan_site.py`, commit. Longer notes go in the "Notes:" list under the table.
+  When you need something from the user (U-check, recording, decision), add a row to the
+  `## User to-do` table at the top of PLAN.md; remove rows that are done.
 - Never read large files whole. `Grep` first, then `Read` with offset/limit. `extracted/fs1.asm`,
   `docs/symbols.txt`, `src/game/state.h` and the big natives (`src/natives/*.c`) are searched, never dumped.
 - Do not re-derive facts already in `docs/PROGRAM_MAP.md`, `docs/SCENERY_FORMAT.md`,

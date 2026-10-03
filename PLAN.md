@@ -16,10 +16,20 @@ Token efficiency is a first-class goal:
 
 Tracker: `python tools/plan_site.py` → `site/index.html` (this plan plus token usage per subtask and model).
 
+## User to-do
+
+What the agents need from you now, most urgent first. Agents add a row when they hand you a task and
+remove it when it is done; subtasks marked `U<n> pending` are added automatically on the plan page.
+
+| Task | What to do | For | Time |
+|---|---|---|---|
+| U1 | Manual PDF → `docs\manual.pdf` (+ `pdftotext`), see U1 below | all | 10 min |
+| U2 | Playtest the current build (checklist in U2 below), report with the U5 format | S4.x | 20 min |
+
 ## Status
 
 - **Done:** Phases 0–3 (S0.1, S1.1, S2.1, S3.0–S3.22). Default build: 0 original instructions.
-- **Next:** S4.1. User tasks that can start now: U1, U2.
+- **Next:** S4.1. Your tasks: **User to-do** above.
 - Escalation rule: a subtask that fails twice on Sonnet → new Opus session with a 5-line note
   (symptom, file, what was tried). Never carry an old transcript over.
 
