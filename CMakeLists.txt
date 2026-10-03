@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(fs1 C)
+project(fs1 VERSION 0.1.0 LANGUAGES C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -41,6 +41,7 @@ endif()
 # One file per native area (phase 3); new files are picked up on the next configure.
 file(GLOB NATIVE_AREA_SOURCES CONFIGURE_DEPENDS src/natives/*.c)
 target_sources(fs1 PRIVATE ${NATIVE_AREA_SOURCES})
+target_compile_definitions(fs1 PRIVATE FS1_VERSION="${PROJECT_VERSION}")
 target_include_directories(fs1 PRIVATE src)
 target_link_libraries(fs1 PRIVATE SDL3::SDL3)
 

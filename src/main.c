@@ -423,6 +423,27 @@ static char *find_default_disk(void)
             SDL_free(path);
         }
     }
+    /* Release zips: any 160K .ima next to the executable or in the working directory. */
+    for (int b = 1; b >= 0; b--) {
+        if (!bases[b])
+            continue;
+        const char *dir = bases[b][0] ? bases[b] : ".";
+        int count = 0;
+        char **names = SDL_GlobDirectory(dir, "*.ima", SDL_GLOB_CASEINSENSITIVE, &count);
+        char *found = NULL;
+        for (int i = 0; names && i < count && !found; i++) {
+            char *path = NULL;
+            SDL_asprintf(&path, "%s%s", bases[b], names[i]);
+            SDL_PathInfo info;
+            if (path && SDL_GetPathInfo(path, &info) && info.type == SDL_PATHTYPE_FILE && info.size == 163840)
+                found = path;
+            else
+                SDL_free(path);
+        }
+        SDL_free(names);
+        if (found)
+            return found;
+    }
     return NULL;
 }
 
@@ -435,7 +456,7 @@ static SDL_AppResult fail(const char *message)
 
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
 {
-    SDL_SetAppMetadata("Flight Simulator 1", "0.2", "fs1-sdl3");
+    SDL_SetAppMetadata("Flight Simulator 1", FS1_VERSION, "fs1-sdl3");
 
     App *app = SDL_calloc(1, sizeof(App));
     if (!app)
@@ -514,6 +535,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         } else if (SDL_strcmp(argv[i], "--list-natives") == 0) {
             native_list();
             return SDL_APP_SUCCESS;
+        } else if (SDL_strcmp(argv[i], "--version") == 0) {
+            SDL_Log("fs1 %s", FS1_VERSION);
+            return SDL_APP_SUCCESS;
         }
         else
             disk_path = argv[i];
@@ -523,8 +547,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
     if (!disk_path) {
         found = find_default_disk();
         if (!found)
-            return fail("Disk image not found.\n\nPut \"" DEFAULT_DISK_NAME "\" in the original/ folder "
-                        "or next to fs1.exe, or pass its path as the first argument.");
+            return fail("Disk image not found.\n\nPut your 160K PC disk image (.ima) next to fs1.exe or in the "
+                        "original/ folder, or pass its path as the first argument.");
         disk_path = found;
     }
 

@@ -25,3 +25,6 @@ Thumbs.db
 # Generated plan tracker (tools/plan_site.py)
 /site/
 /work/
+
+# Release output (tools/package.py)
+/release/

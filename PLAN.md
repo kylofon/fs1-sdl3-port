@@ -23,11 +23,12 @@ remove it when it is done; subtasks marked `U<n> pending` are added automaticall
 
 | Task | What to do | For | Time |
 |---|---|---|---|
+| Publish v0.1.0 | Unzip `release/fs1port-v0.1.0-win64.zip`, start `fs1.exe` with your `.ima` beside it, fly a minute. If OK: push `main`, tag `v0.1.0`, create a GitHub release on kylofon/fs1-sdl3-port with the zip, body = `release/RELEASE_NOTES.md` (+ `SHA256SUMS.txt`) | S4.1 | 10 min |
 
 ## Status
 
 - **Done:** Phases 0–3 (S0.1, S1.1, S2.1, S3.0–S3.22). Default build: 0 original instructions.
-- **Next:** S4.1. Your tasks: **User to-do** above.
+- **Next:** S4.2. Your tasks: **User to-do** above.
 - Escalation rule: a subtask that fails twice on Sonnet → new Opus session with a 5-line note
   (symptom, file, what was tried). Never carry an old transcript over.
 
@@ -120,6 +121,11 @@ The CGA path stays as "authentic" mode.
 | S4.12 | Release v1.0: packaging, README with screenshots taken by the user, CHANGELOG | H | S | |
 
 Notes:
+- S4.1: `python tools/package.py` (Release build in `build/`, then `release/`: `fs1port-v<ver>-win64.zip`,
+  `RELEASE_NOTES.md` from the CHANGELOG section, `SHA256SUMS.txt`), same layout as StreetRod/TD2. DLLs are
+  found by walking `objdump` imports into `mingw64/bin` (SDL3.dll, libiconv-2.dll); `licenses/THIRD-PARTY.txt`
+  takes package versions from the pacman db. Version: `project(fs1 VERSION ...)` → `FS1_VERSION`, `--version`.
+  The disk lookup also accepts any 160K `.ima` next to the exe / in the working directory. LICENSE: MIT.
 - S4.2 must keep the authentic path byte-identical: recording is a side channel, and the
   `verify_campaign.py` gate (emulator build) still applies to every natives change.
 - S4.7 and S4.10 change what the player sees; they are options (default: authentic behaviour).
