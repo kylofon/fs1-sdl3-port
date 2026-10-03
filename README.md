@@ -10,7 +10,7 @@ the engine note and tones are made from the game's sound model. The 8088 memory 
 remain as the routines' data model, and the screen is drawn from the CGA memory. The original code still
 runs, for verification, in the optional emulator build (an embedded minimal PC: 8088 + CGA + PIT/PIC +
 keyboard + speaker, high-level BIOS, no IBM ROM).
-See [docs/PORT_PLAN.md](docs/PORT_PLAN.md) and [docs/PHASE3_PLAN.md](docs/PHASE3_PLAN.md).
+See [PLAN.md](PLAN.md) for the roadmap and per-subtask model/effort. Phase 3 detail is in [docs/PHASE3_PLAN.md](docs/PHASE3_PLAN.md).
 
 **Plan and tracker:** [PLAN.md](PLAN.md) (subtasks, model per subtask, user tasks); `python tools/plan_site.py` renders it with token usage to `site/index.html`.
 
@@ -123,7 +123,7 @@ See [docs/CLOUD.md](docs/CLOUD.md) for building and verifying on a headless Linu
 - `tools/`: Python helpers
   - `pc_loadstream.py` decodes the PC boot loader stream and dumps the loaded memory image
   - `dsk_catalog.py` and `dis6502.py` are for the Apple II reference image
-- `docs/`: [PC disk analysis](docs/ANALYSIS_PC.md), [port plan](docs/PORT_PLAN.md),
+- `docs/`: [PC disk analysis](docs/ANALYSIS_PC.md), [original port plan](docs/PORT_PLAN.md) (phase 1–4 design),
   [Apple II notes](docs/ANALYSIS_APPLE2.md)
 - `original/`: your disk images (gitignored)
 - `extracted/`: generated memory dumps (gitignored)

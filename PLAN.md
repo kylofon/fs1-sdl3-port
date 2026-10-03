@@ -6,13 +6,15 @@ A faithful C port of Microsoft Flight Simulator 1.05 for the IBM PC, followed by
   and replaced by C verified against the original. The default build now runs with no 8086 interpreter.
 - **Phase 4 makes it a modern game:** sharp graphics, gamepad, widescreen.
 
+**Execution tracker:** This file (subtasks, model per subtask, user tasks). Design rationale is in
+[docs/PORT_PLAN.md](docs/PORT_PLAN.md) (phases 1–4 approach). Phase 3 detail: [docs/PHASE3_PLAN.md](docs/PHASE3_PLAN.md).
+
 Token efficiency is a first-class goal:
 - small subtasks, one session each;
 - the cheapest model that can do the job;
 - the user does whatever is cheap for a human and expensive for a model (looking at pictures, playing).
 
-Tracker: `python tools/plan_site.py` → `site/index.html` (this plan plus token usage per subtask and
-model). Phase 3 detail: [docs/PHASE3_PLAN.md](docs/PHASE3_PLAN.md).
+Tracker: `python tools/plan_site.py` → `site/index.html` (this plan plus token usage per subtask and model).
 
 ## Status
 
@@ -58,7 +60,7 @@ under each table, never between rows.
 ### Phase 3 follow-ups
 | Id | Task | Model | Size | Status |
 |---|---|---|---|---|
-| S3F.1 | Docs refresh after 3.22: README status/build section, `PROGRAM_MAP.md` "what this means for phase 3" → current architecture (C scheduler, natives, state.h), `PORT_PLAN.md` phase list → this file | H | S | |
+| S3F.1 | Docs refresh after 3.22: README status/build section, `PROGRAM_MAP.md` "what this means for phase 3" → current architecture (C scheduler, natives, state.h), `PORT_PLAN.md` phase list → this file | H | S | done 2026-10-03 |
 | S3F.2 | Emulator build sound: audio with natives on is ~62 % off the original (IRQ0 backlog vs int8 native). Find and fix, `tools/audio_compare.py` must pass | S | M | |
 | S3F.3 | `scenery_interp` charges 30 cycles less than the original on the horizon capture program (3.5 notes); fix accounting, `--verify` with `exact_cycles` | S | S | |
 | S3F.4 | Coverage of never-run paths: rare scenery opcodes (05 06 08 0D 0E 10 11 15 2A 34), carb ice, engine faults/empty tanks, ≥512 kt, war kills/explosions/damage. Uses U3 recordings; verify in the emulator build | S | M | needs U3 |
