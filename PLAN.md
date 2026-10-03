@@ -23,7 +23,6 @@ remove it when it is done; subtasks marked `U<n> pending` are added automaticall
 
 | Task | What to do | For | Time |
 |---|---|---|---|
-| Publish v0.1.0 | Unzip `release/fs1port-v0.1.0-win64.zip`, start `fs1.exe` with your `.ima` beside it, fly a minute. If OK: push `main`, tag `v0.1.0`, create a GitHub release on kylofon/fs1-sdl3-port with the zip, body = `release/RELEASE_NOTES.md` (+ `SHA256SUMS.txt`) | S4.1 | 10 min |
 
 ## Status
 
