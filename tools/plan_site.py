@@ -37,9 +37,11 @@ OVERRIDES = {"7beb55d6": "S1.1", "c6120d31": "S2.1", "fe4c06df": "S3.0"}
 def subtask_of(prompt, sid=""):
     if sid[:8] in OVERRIDES:
         return OVERRIDES[sid[:8]]
-    m = re.search(r"\bS\d+[A-Z]?\.\d+\b", prompt[:200])
-    if m:
-        return m[0]
+    # typed by hand: "s3f.1", "S3f.4", "s3f3"
+    for m in re.finditer(r"\bs(\d+)(?:(f)\.?|\.)(\d+)\b", prompt[:200], re.I):
+        sub = f"S{m[1]}{'F' if m[2] else ''}.{m[3]}"
+        if sub in SUBTASKS:
+            return sub
     p = norm(prompt)[:60]
     for sid, text in SUBTASKS.items():
         if p and (p in norm(text) or norm(text)[:60] in p):
@@ -62,6 +64,7 @@ def usage():
     sessions = []
     for main in sorted(TRANSCRIPTS.glob("*.jsonl")):
         sid = main.stem
+        # custom-title.json is not reliable (the same title shows up on several sessions): first prompt wins
         title_file = TRANSCRIPTS / sid / "custom-title.json"
         title = json.loads(title_file.read_text(encoding="utf-8")).get("customTitle", "") if title_file.exists() else ""
         prompt = first_prompt(main)
@@ -82,7 +85,7 @@ def usage():
             for k in FIELDS:
                 row[k] += u.get(k) or 0
         stamps = sorted(t for _, _, t in msgs.values() if t)
-        sessions.append({"id": sid[:8], "subtask": subtask_of(prompt, sid), "title": title or prompt[:70],
+        sessions.append({"id": sid[:8], "subtask": subtask_of(prompt, sid), "title": prompt[:70] or title,
                          "start": stamps[0][:16].replace("T", " ") if stamps else "", "models": by_model})
     return sessions
 
