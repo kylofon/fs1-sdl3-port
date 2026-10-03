@@ -72,9 +72,13 @@ under each table, never between rows.
 | S3F.2 | Emulator build sound: audio with natives on is ~62 % off the original (IRQ0 backlog vs int8 native). Find and fix, `tools/audio_compare.py` must pass | S | M | done 2026-10-03 |
 | S3F.3 | `scenery_interp` charges 30 cycles less than the original on the horizon capture program (3.5 notes); fix accounting, `--verify` with `exact_cycles` | S | S | dropped 2026-10-03 (see Notes) |
 | S3F.4 | Coverage of never-run paths: rare scenery opcodes (05 06 08 0D 0E 10 11 15 2A 34), carb ice, engine faults/empty tanks, ≥512 kt, war kills/explosions/damage. Reached with --poke sessions (`tools/rare_sessions.py`); verify in the emulator build | S | M | done 2026-10-03 |
-| S3F.5 | `disk_backup` (5F54): native, or hide the backup option in the default build; document | H | S | |
+| S3F.5 | `disk_backup` (5F54): native, or hide the backup option in the default build; document | H | S | done 2026-10-03 |
 
 Notes:
+- S3F.5: stub native that returns immediately to the menu (address 0x5DA0). The original `disk_backup` at 0x5F54
+  is a menu-driven backup utility for a second blank disk, which has no equivalent in the modern port. The stub
+  prevents the "no C implementation" error while being honest about the hardware limitation: users who select
+  C in the mode menu will skip the backup and return to the menu. Verified with `python tools/verify_campaign.py`.
 - S3F.4: no recordings needed. `fs1 --poke FRAME:OFF=VAL[*N]` (also `OFF=@SRC[.N][+-D]`, a copy each frame)
   writes DS 0618 state; `python tools/rare_sessions.py` runs 11 sessions with `--verify all` (0 mismatches) and
   `--coverage` prints, per target range, how much of it ran. Reached: engine faults 0F, tank leaks and empty

@@ -718,6 +718,14 @@ static bool n_hang(Pc *pc)
     return true;
 }
 
+/* 5F54: disk_backup - "insert master/copy" backup loop. Requires a second blank disk.
+ * This is a stub that returns to the menu without performing the backup, since the modern
+ * port has no physical disk drives. The original hangs at 602B; we return immediately. */
+static void b_disk_backup(Pc *pc)
+{
+    ret(pc, 0x5DA0);
+}
+
 /* ---- 0050:3640 editor_main, 3703 editor_get_input (blocks) ------------------------------- */
 
 static void editor_input_call(Pc *pc)
@@ -1650,6 +1658,7 @@ ENTRY_FN(next_line, b_next_line)
 ENTRY_FN(span_clear, b_span_clear)
 ENTRY_FN(slew_to_editor_pos, b_slew_to_editor_pos)
 ENTRY_FN(engine_stop, b_engine_stop)
+ENTRY_FN(disk_backup, b_disk_backup)
 
 #define E(nm, o, f) { .name = nm, .seg = GAME_CS, .off = o, .fn = n_##f, .enabled = true, .cycles = ENTRY_CYCLES }
 #define B(nm, o, f, lo, hi, st)                                                                                 \
@@ -1686,6 +1695,7 @@ NativeEntry native_startup[] = {
     E("war_span_clear", 0x5AD7, span_clear),
     E("slew_to_editor_pos", 0x1CEC, slew_to_editor_pos),
     E("engine_stop", 0x2EDB, engine_stop),
+    E("disk_backup", 0x5F54, disk_backup),
     B("start", 0x5C9F, n_start, 0x5C9F, 0x5CCD, no_stops),
     B("start@5CAA", 0x5CAA, n_start, 0x5C9F, 0x5CCD, no_stops),
     B("start@5CAD", 0x5CAD, n_start, 0x5C9F, 0x5CCD, no_stops),
