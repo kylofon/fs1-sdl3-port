@@ -11,6 +11,13 @@
  *   --screenshot FILE   save the last frame as BMP on quit
  *   --keys LIST         scripted key presses, comma separated FRAME:KEY[*HOLD_FRAMES],
  *                       KEY is an SDL scancode name, e.g. "300:F2,400:Keypad 8*30"
+ *   --poke LIST         scripted writes to the game data segment (DS 0618), comma separated
+ *                       FRAME:OFF=VAL[*FRAMES], hex OFF and VAL; VAL of 1-2 hex digits writes a
+ *                       byte, 3-4 a word; *FRAMES repeats the write at the start of each frame,
+ *                       e.g. "3000:1DC8=02,3000:08A8=DA20*120". VAL @SRC[.N][+-DELTA] copies N
+ *                       bytes (1-3, default 2) from SRC, plus hex DELTA, e.g. "5000:1F3B=@30D2.3-800"
+ *                       (applied in list order, each frame). Used to reach rare states
+ *                       (tools/rare_sessions.py)
  *   --shot-at FRAME     also save FILE_FRAME.bmp at that frame (repeatable)
  *   --type TEXT         type TEXT, one key per second, starting after 2 seconds
  *   --dump-on-exit      write extracted/mem_dump.bin on quit
@@ -70,6 +77,8 @@ typedef struct App {
     const char *type_text;
     struct { long frame, hold; uint8_t sc; } keys[4096];
     int key_count;
+    struct { long frame, hold; uint16_t off, src; uint32_t val; int size; bool copy; } pokes[1024];
+    int poke_count;
     long shot_at[32];
     int shot_count;
     bool dump_on_exit;
@@ -330,6 +339,67 @@ static void run_key_script(App *app)
     }
 }
 
+static void parse_pokes(App *app, const char *list)
+{
+    char *copy = SDL_strdup(list), *save = NULL;
+    for (char *tok = SDL_strtok_r(copy, ",", &save); tok; tok = SDL_strtok_r(NULL, ",", &save)) {
+        char *colon = SDL_strchr(tok, ':'), *eq = SDL_strchr(tok, '=');
+        if (!colon || !eq || eq < colon) {
+            SDL_Log("--poke: bad entry '%s'", tok);
+            continue;
+        }
+        if (app->poke_count >= (int)SDL_arraysize(app->pokes)) {
+            SDL_Log("--poke: more than %d entries, the rest are ignored", (int)SDL_arraysize(app->pokes));
+            break;
+        }
+        *eq = 0;
+        char *val = eq + 1, *star = SDL_strchr(val, '*');
+        long hold = 1;
+        if (star) {
+            *star = 0;
+            hold = SDL_atoi(star + 1);
+        }
+        app->pokes[app->poke_count].frame = SDL_atoi(tok);
+        app->pokes[app->poke_count].hold = hold < 1 ? 1 : hold;
+        app->pokes[app->poke_count].off = (uint16_t)SDL_strtoul(colon + 1, NULL, 16);
+        if (val[0] == '@') { /* @SRC[.N][+-DELTA]: copy N bytes (default 2) from SRC, plus DELTA */
+            char *end;
+            app->pokes[app->poke_count].copy = true;
+            app->pokes[app->poke_count].src = (uint16_t)SDL_strtoul(val + 1, &end, 16);
+            app->pokes[app->poke_count].size = 2;
+            if (*end == '.')
+                app->pokes[app->poke_count].size = (int)SDL_strtoul(end + 1, &end, 10);
+            app->pokes[app->poke_count].val = *end == '+' || *end == '-' ? (uint32_t)SDL_strtol(end, NULL, 16) : 0;
+        } else {
+            app->pokes[app->poke_count].copy = false;
+            app->pokes[app->poke_count].val = (uint32_t)SDL_strtoul(val, NULL, 16);
+            app->pokes[app->poke_count].size = SDL_strlen(val) > 2 ? 2 : 1;
+        }
+        if (app->pokes[app->poke_count].size < 1 || app->pokes[app->poke_count].size > 3) {
+            SDL_Log("--poke: bad size in '%s'", val);
+            continue;
+        }
+        app->poke_count++;
+    }
+    SDL_free(copy);
+}
+
+static void run_poke_script(App *app)
+{
+    for (int i = 0; i < app->poke_count; i++) {
+        long rel = app->frame - app->pokes[i].frame;
+        if (rel < 0 || rel >= app->pokes[i].hold)
+            continue;
+        uint8_t *mem = app->pc->mem + 0x6180u; /* DS 0618 */
+        uint32_t v = app->pokes[i].val;
+        if (app->pokes[i].copy)
+            for (int b = 0; b < app->pokes[i].size; b++)
+                v += (uint32_t)mem[(uint16_t)(app->pokes[i].src + b)] << (8 * b);
+        for (int b = 0; b < app->pokes[i].size; b++)
+            mem[(uint16_t)(app->pokes[i].off + b)] = (uint8_t)(v >> (8 * b));
+    }
+}
+
 static bool file_exists(const char *path)
 {
     SDL_PathInfo info;
@@ -417,6 +487,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
             app->dump_on_exit = true;
         else if (SDL_strcmp(argv[i], "--keys") == 0 && i + 1 < argc)
             parse_keys(app, argv[++i]);
+        else if (SDL_strcmp(argv[i], "--poke") == 0 && i + 1 < argc)
+            parse_pokes(app, argv[++i]);
         else if (SDL_strcmp(argv[i], "--shot-at") == 0 && i + 1 < argc) {
             if (app->shot_count < (int)SDL_arraysize(app->shot_at))
                 app->shot_at[app->shot_count++] = SDL_atoi(argv[++i]);
@@ -653,6 +725,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     }
 
     run_key_script(app);
+    run_poke_script(app);
     if (app->stats && app->frame == app->stats_from && !pc->cpu.exec_count) {
         pc->cpu.exec_count = app->exec_count;
         app->stats_native_calls0 = native_total_calls();

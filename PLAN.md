@@ -23,7 +23,6 @@ remove it when it is done; subtasks marked `U<n> pending` are added automaticall
 
 | Task | What to do | For | Time |
 |---|---|---|---|
-| U3 — rare-path recordings | In the emulator build (`build-emu/fs1.exe --verify all`) fly: shoot down an enemy / get hit in war mode, an engine failure or empty tank, carb ice, ≥512 kt. Send the log lines containing `mismatch` (or "none"). Details: section U3 below | S3F.4 | 15 min |
 
 ## Status
 
@@ -72,10 +71,18 @@ under each table, never between rows.
 | S3F.1 | Docs refresh after 3.22: README status/build section, `PROGRAM_MAP.md` "what this means for phase 3" → current architecture (C scheduler, natives, state.h), `PORT_PLAN.md` phase list → this file | H | S | done 2026-10-03 |
 | S3F.2 | Emulator build sound: audio with natives on is ~62 % off the original (IRQ0 backlog vs int8 native). Find and fix, `tools/audio_compare.py` must pass | S | M | done 2026-10-03 |
 | S3F.3 | `scenery_interp` charges 30 cycles less than the original on the horizon capture program (3.5 notes); fix accounting, `--verify` with `exact_cycles` | S | S | dropped 2026-10-03 (see Notes) |
-| S3F.4 | Coverage of never-run paths: rare scenery opcodes (05 06 08 0D 0E 10 11 15 2A 34), carb ice, engine faults/empty tanks, ≥512 kt, war kills/explosions/damage. Uses U3 recordings; verify in the emulator build | S | M | U3 pending |
+| S3F.4 | Coverage of never-run paths: rare scenery opcodes (05 06 08 0D 0E 10 11 15 2A 34), carb ice, engine faults/empty tanks, ≥512 kt, war kills/explosions/damage. Reached with --poke sessions (`tools/rare_sessions.py`); verify in the emulator build | S | M | done 2026-10-03 |
 | S3F.5 | `disk_backup` (5F54): native, or hide the backup option in the default build; document | H | S | |
 
 Notes:
+- S3F.4: no recordings needed. `fs1 --poke FRAME:OFF=VAL[*N]` (also `OFF=@SRC[.N][+-D]`, a copy each frame)
+  writes DS 0618 state; `python tools/rare_sessions.py` runs 11 sessions with `--verify all` (0 mismatches) and
+  `--coverage` prints, per target range, how much of it ran. Reached: engine faults 0F, tank leaks and empty
+  tanks, starter (both seasons), carb ice (loss and the natural trigger), all 8 random-failure handlers
+  (05EF..0624), airspeed caps 18FB..1904, wing-damage zeroing, the fix_loop_over mirror, scenery opcodes
+  05 06 08 0D 0E 10 11 15 2A 34 (none occur in shipped data: a stub at DS:5B80 patched into area 0), war
+  shoot-down, explosion, score wrap, bomb hit, enemy fire and every damage level, enemy in the view (dot,
+  sprites, in range). Still partial (other branch of a compare): 0E 7/8, 2A 12/13, sprites 17/26, fire 20/24.
 - S3F.3: `scenery_interp` itself is exact. Run with `.exact_cycles = true` and the transform natives off
   (`--native-off` rotate_point, world_to_eye_delta, outcode_p1/p2, clip_p1_plane, clip_line_planes) it matches the original
   at 10384 cycles per horizon capture. The 30 cycles come from those `transform.c` natives, which charge averages (not
@@ -134,13 +141,6 @@ Build: `cmake --build build`, run `build\fs1.exe`. Check:
 - Ctrl+Alt+Del.
 
 Report with the U5 format.
-
-### U3 — Rare-path recordings (when S3F.4 asks, 15 min)
-Fly the situations S3F.4 lists in the **emulator build** with `--verify all` and send the log lines that
-contain `mismatch` (or "none"), for example:
-- shoot down an enemy in war mode;
-- an engine failure;
-- carb ice.
 
 ### U4 — Visual checks (when an agent asks)
 Open the screenshot or contact sheet it names next to the authentic mode, and reply in one line: `OK`, or
