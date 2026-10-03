@@ -12,6 +12,9 @@ runs, for verification, in the optional emulator build (an embedded minimal PC: 
 keyboard + speaker, high-level BIOS, no IBM ROM).
 See [PLAN.md](PLAN.md) for the roadmap and per-subtask model/effort. Phase 3 detail is in [docs/PHASE3_PLAN.md](docs/PHASE3_PLAN.md).
 
+**Enhanced version** (sharp graphics, widescreen, gamepad; in the making): the FS1 Enhanced repo, built on
+this port's v0.1.0 release.
+
 **Plan and tracker:** [PLAN.md](PLAN.md) (subtasks, model per subtask, user tasks); `python tools/plan_site.py` renders it with token usage to `site/index.html`.
 
 ## How to play (Windows)

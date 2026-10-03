@@ -4,7 +4,7 @@ A faithful C port of Microsoft Flight Simulator 1.05 for the IBM PC, followed by
 
 - **Phases 0–3 are done.** The original ran on our 8086 emulator; every routine was then reverse-engineered
   and replaced by C verified against the original. The default build now runs with no 8086 interpreter.
-- **Phase 4 makes it a modern game:** sharp graphics, gamepad, widescreen.
+- **Phase 4** released v0.1.0; the modernisation moved to the FS1 Enhanced repo (`C:\Coding\FS1Enhanced`).
 
 **Execution tracker:** This file (subtasks, model per subtask, user tasks). Design rationale is in
 [docs/PORT_PLAN.md](docs/PORT_PLAN.md) (phases 1–4 approach). Phase 3 detail: [docs/PHASE3_PLAN.md](docs/PHASE3_PLAN.md).
@@ -27,7 +27,8 @@ remove it when it is done; subtasks marked `U<n> pending` are added automaticall
 ## Status
 
 - **Done:** Phases 0–3 (S0.1, S1.1, S2.1, S3.0–S3.22). Default build: 0 original instructions.
-- **Next:** S4.2. Your tasks: **User to-do** above.
+- **Faithful port finished:** v0.1.0 published 2026-10-03. Enhancements (old S4.2–S4.12) continue in the
+  separate repo `C:\Coding\FS1Enhanced` (its PLAN.md). Here: engine bug fixes only, then ported there.
 - Escalation rule: a subtask that fails twice on Sonnet → new Opus session with a 5-line note
   (symptom, file, what was tried). Never carry an old transcript over.
 
@@ -106,18 +107,18 @@ The CGA path stays as "authentic" mode.
 
 | Id | Task | Model | Size | Status |
 |---|---|---|---|---|
-| S4.1 | Release v0.1.0: `release/` zip with `fs1.exe`, `SDL3.dll`, README, CHANGELOG; `tools/package.py` | H | S | |
-| S4.2 | Design: display-list format and recording points in the natives (`raster.h` lines, `fill_rows`/horizon, `textdraw.h`, `panel.h` sprites/needles, scenery dots); sub-pixel coordinates from the projection before rounding; `docs/RENDER4.md`; no code beyond a skeleton | O | M | |
-| S4.3 | 3D view display list: record scenery lines/dots/polygons and horizon with float coordinates; `--dump-dl` to a text file per frame for checks | S | M | |
-| S4.4 | SDL back end for the 3D view: lines (`SDL_RenderLines`, thickness option), filled sky/ground and polygons (`SDL_RenderGeometry`), composite-equivalent palette; toggle authentic/sharp (F11 cycles); **U4 check** | S | M | |
-| S4.5 | Instrument panel at high resolution: needles as lines/polygons, indicators and sprites upscaled or vector-traced from the original sprite data; **U4 check** | S | L | |
-| S4.6 | Text at high resolution: the 16×5 game font rendered as scalable glyphs (vector from the font bits), panel and menu text; editor text mode with a sharp font | S | M | |
-| S4.7 | Widescreen / aspect: extend the horizontal field of view (projection scale and clip planes in `transform.c`), panel layout for 16:9; options 4:3 / 16:10 / 16:9; **U4 check** | O | M | |
-| S4.8 | Gamepad and joystick (SDL3 gamepad API): analog elevator/aileron/rudder/throttle written into the control variables with the original key steps' scaling; dead zone; hot-plug | S | M | |
-| S4.9 | Mouse yoke (optional, toggle key) and configurable key bindings (`fs1.ini`); in-game help overlay listing the keys | S | M | |
-| S4.10 | Smooth frame rate: run the simulation at the original rates, render the 3D view every display frame with interpolated eye position/attitude from the display list; no sim behaviour change | O | L | |
-| S4.11 | Settings and save state: `fs1.ini` (display mode, aspect, scale, audio, controls), F5/F9 quick save/load of the whole game state (memory array + registers) | S | M | |
-| S4.12 | Release v1.0: packaging, README with screenshots taken by the user, CHANGELOG | H | S | |
+| S4.1 | Release v0.1.0: `release/` zip with `fs1.exe`, `SDL3.dll`, README, CHANGELOG; `tools/package.py` | H | S || done 2026-10-03 |
+| S4.2 | Design: display-list format and recording points in the natives (`raster.h` lines, `fill_rows`/horizon, `textdraw.h`, `panel.h` sprites/needles, scenery dots); sub-pixel coordinates from the projection before rounding; `docs/RENDER4.md`; no code beyond a skeleton | O | M || moved → FS1Enhanced S1.1 |
+| S4.3 | 3D view display list: record scenery lines/dots/polygons and horizon with float coordinates; `--dump-dl` to a text file per frame for checks | S | M || moved → FS1Enhanced S1.2 |
+| S4.4 | SDL back end for the 3D view: lines (`SDL_RenderLines`, thickness option), filled sky/ground and polygons (`SDL_RenderGeometry`), composite-equivalent palette; toggle authentic/sharp (F11 cycles); **U4 check** | S | M || moved → FS1Enhanced S1.3 |
+| S4.5 | Instrument panel at high resolution: needles as lines/polygons, indicators and sprites upscaled or vector-traced from the original sprite data; **U4 check** | S | L || moved → FS1Enhanced S2.1 |
+| S4.6 | Text at high resolution: the 16×5 game font rendered as scalable glyphs (vector from the font bits), panel and menu text; editor text mode with a sharp font | S | M || moved → FS1Enhanced S2.2 |
+| S4.7 | Widescreen / aspect: extend the horizontal field of view (projection scale and clip planes in `transform.c`), panel layout for 16:9; options 4:3 / 16:10 / 16:9; **U4 check** | O | M || moved → FS1Enhanced S3.1 |
+| S4.8 | Gamepad and joystick (SDL3 gamepad API): analog elevator/aileron/rudder/throttle written into the control variables with the original key steps' scaling; dead zone; hot-plug | S | M || moved → FS1Enhanced S4.1 |
+| S4.9 | Mouse yoke (optional, toggle key) and configurable key bindings (`fs1.ini`); in-game help overlay listing the keys | S | M || moved → FS1Enhanced S4.2 |
+| S4.10 | Smooth frame rate: run the simulation at the original rates, render the 3D view every display frame with interpolated eye position/attitude from the display list; no sim behaviour change | O | L || moved → FS1Enhanced S3.2 |
+| S4.11 | Settings and save state: `fs1.ini` (display mode, aspect, scale, audio, controls), F5/F9 quick save/load of the whole game state (memory array + registers) | S | M || moved → FS1Enhanced S5.1 |
+| S4.12 | Release v1.0: packaging, README with screenshots taken by the user, CHANGELOG | H | S || moved → FS1Enhanced S5.3 |
 
 Notes:
 - S4.1: `python tools/package.py` (Release build in `build/`, then `release/`: `fs1port-v<ver>-win64.zip`,
@@ -167,14 +168,11 @@ Files: work\bugs\<n>.png
 Several bugs in one message; one session then fixes them in a batch.
 
 ### U6 — Decisions (answer when convenient; defaults apply otherwise)
-1. **Enhanced repo**: phase 4 in this repo (default), or a separate `FS1Enhanced` repo like F-117A/Aces?
-2. **Sharp mode colours**: the four composite colours exactly (default), or a richer palette?
-3. **Default mode at start**: authentic (default) or sharp?
-4. **Widescreen**: extend the field of view (default) or stretch?
-5. **Disk backup option**: hide it in the default build (default).
+(Decisions 1–4 moved to FS1Enhanced PLAN.md U3; 5 settled by S3F.5.)
 
 ## Decisions
-(Settled answers from U6 go here, dated.)
+- 2026-10-03: Enhanced work in a separate repo `FS1Enhanced`, created from the v0.1.0 release (S4.2–S4.12 moved
+  there, renumbered; see the status cells).
 
 ## TODO (parked)
 - [ ] Apple II version (docs/ANALYSIS_APPLE2.md) — out of scope.

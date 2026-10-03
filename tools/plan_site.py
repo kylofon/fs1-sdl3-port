@@ -161,7 +161,7 @@ doc.querySelectorAll('td').forEach(td => {
   const t = td.textContent.trim();
   if (/^[HSO]$/.test(t)) td.innerHTML = '<span class="b ' + t + '">' + t + '</span>';
   else if (/^done/.test(t)) td.classList.add('done');
-  else if (/^dropped/.test(t)) td.classList.add('dropped');
+  else if (/^(dropped|moved)/.test(t)) td.classList.add('dropped');
 });
 // "User to-do" is the first table: move that section under the title, and add a row for every
 // subtask whose status cell says "U<n> pending" but which the to-do section does not mention yet.
