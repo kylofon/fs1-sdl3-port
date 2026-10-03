@@ -91,6 +91,7 @@ Rendering today: the natives draw into the 640×200 CGA bitmap, which is decoded
 scaled. Phase 4 adds a **display list**: the same natives also record what they draw (lines, fills,
 text, sprites) in resolution-independent form, and a new SDL back end draws it sharply at window size.
 The CGA path stays as "authentic" mode.
+
 | Id | Task | Model | Size | Status |
 |---|---|---|---|---|
 | S4.1 | Release v0.1.0: `release/` zip with `fs1.exe`, `SDL3.dll`, README, CHANGELOG; `tools/package.py` | H | S | |

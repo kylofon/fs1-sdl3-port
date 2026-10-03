@@ -91,7 +91,7 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>F-117A Port Plan</title>
+<title>FS1 Port Plan</title>
 <style>
 :root { --bg:#f7f7f5; --fg:#1d1d1b; --muted:#6b6b66; --card:#fff; --line:#deded8; --accent:#2b5fab;
         --code:#efefea; --h:#3d7a3d; --s:#2b5fab; --o:#8a4bb0; --done:#3d7a3d; }
@@ -124,6 +124,7 @@ th { background:var(--code); font-weight:600; }
      font-weight:700; font-size:12px; color:#fff; }
 .b.H { background:var(--h); } .b.S { background:var(--s); } .b.O { background:var(--o); }
 td.done { color:var(--done); font-weight:600; }
+td.dropped { color:var(--muted); text-decoration:line-through; }
 .meta { color:var(--muted); font-size:12px; margin-bottom:20px; }
 .cards { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin:12px 0 18px; }
 .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
@@ -157,6 +158,7 @@ doc.querySelectorAll('td').forEach(td => {
   const t = td.textContent.trim();
   if (/^[HSO]$/.test(t)) td.innerHTML = '<span class="b ' + t + '">' + t + '</span>';
   else if (/^done/.test(t)) td.classList.add('done');
+  else if (/^dropped/.test(t)) td.classList.add('dropped');
 });
 // "User to-do" is the first table: move that section under the title, and add a row for every
 // subtask whose status cell says "U<n> pending" but which the to-do section does not mention yet.
